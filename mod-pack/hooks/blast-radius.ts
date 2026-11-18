@@ -7,7 +7,8 @@
 //
 // ponytail: a safety net, not a permission system. This is a regex table over the
 // command text. It does NOT catch: an alias, a script that calls rm, a command
-// built from variables (`rm -rf "$DIR"`, `eval "$cmd"`), or other quoting tricks.
+// built from variables (`eval "$cmd"`), or other quoting tricks. A variable set earlier
+// in the same command is only filled in for the preview, never used to decide.
 // It splits on `&&`, `||`, `;`, `|`, `&` and newlines and also inside quotes, so
 // `echo "a; rm -rf x"` is a false positive. That is acceptable. `echo "rm -rf x"`
 // and `grep rm -rf README` are NOT held: a rule matches only at the start of a segment.
@@ -27,7 +28,7 @@ export const blastRadius = defineFeature<never>({
 
 // ---- The rule table -------------------------------------------------------------
 
-export type PreviewKind = 'status-all' | 'status-worktree' | 'clean' | 'push' | 'branch' | 'stash' | 'paths'
+export type PreviewKind = 'status-all' | 'status-worktree' | 'clean' | 'push' | 'branch' | 'stash' | 'paths' | 'deploy'
 
 export type Rule = {
   kind: string
@@ -45,6 +46,10 @@ const ARGS = String.raw`(?:\s+\S+)*?` // any words between the command and the f
 const END = String.raw`(?=\s|$)` // the end of a word
 // `git`, then global options (`-C dir`, `-c k=v`, `--no-pager`), then a space.
 const GIT = String.raw`^git(?:\.exe)?(?:\s+(?:-[Cc]\s+\S+|--?[\w-]+(?:=\S+)?))*\s+`
+
+// A package runner before a CLI: `npx vercel ...`, `pnpm dlx netlify ...`.
+const RUN = String.raw`(?:(?:npx|bunx|(?:pnpm|yarn)\s+dlx|(?:pnpm|npm)\s+exec)(?:\s+-\S+)*\s+)?`
+const CLI = String.raw`(?:\.cmd|\.exe)?` // the Windows shims of a CLI
 
 const re = (source: string, flags = '') => new RegExp(source, flags)
 
@@ -78,6 +83,22 @@ export const RULES: readonly Rule[] = [
     regex: re(String.raw`${GIT}branch${ARGS}\s+-[a-zA-Z]*D[a-zA-Z]*${END}`) },
   { kind: 'git-stash-drop', title: 'git stash drop／clear（刪掉暫存起來的修改）', preview: 'stash',
     regex: re(String.raw`${GIT}stash\s+(?:drop|clear)${END}`) },
+
+  // Deploy to production: every user sees the new version at once. A preview deploy is not held.
+  { kind: 'deploy-prod', title: '發布到正式環境（vercel --prod）', preview: 'deploy',
+    regex: re(String.raw`^${RUN}vercel${CLI}${ARGS}\s+(?:--prod|--production|--target(?:=|\s+)production)${END}`) },
+  { kind: 'deploy-prod', title: '把某個版本設為正式版（vercel promote）', preview: 'deploy',
+    regex: re(String.raw`^${RUN}vercel${CLI}\s+promote${END}`) },
+  { kind: 'deploy-prod', title: '發布到正式環境（netlify deploy --prod）', preview: 'deploy',
+    regex: re(String.raw`^${RUN}netlify${CLI}\s+deploy${ARGS}\s+--prod(?:IfUnlocked)?${END}`) },
+  // `wrangler deploy` goes to production unless `--env` names another environment.
+  { kind: 'deploy-prod', title: '發布到正式環境（wrangler deploy）', preview: 'deploy',
+    regex: re(String.raw`^${RUN}wrangler${CLI}\s+(?:deploy|publish)${END}`),
+    unless: re(String.raw`\s(?:--dry-run|(?:--env|-e)(?:=|\s+)(?!prod(?:uction)?(?:\s|$))\S+)`) },
+  { kind: 'deploy-prod', title: '發布到正式環境（firebase deploy）', preview: 'deploy',
+    regex: re(String.raw`^${RUN}firebase${CLI}\s+deploy${END}`) },
+  { kind: 'deploy-prod', title: '發布到正式環境（fly deploy）', preview: 'deploy',
+    regex: re(String.raw`^${RUN}(?:fly|flyctl)${CLI}\s+deploy${END}`) },
 ]
 
 // ---- Classifier -------------------------------------------------------------------
@@ -113,24 +134,113 @@ export type Risk = {
   // The segment as the rule saw it (prefix removed).
   segment: string
   // True when an earlier segment of the command changed directory (`cd x && rm -rf y`).
-  // A relative path is then not resolved against the session folder.
   hasCd: boolean
+  // Where the segment runs, after the earlier `cd`s. See `Dir`.
+  dir: Dir
+  // The shell variables an earlier segment set to a known value (`D=/x && rm -rf $D/y`).
+  vars: Vars
 }
 
+// Where a segment runs. `path` undefined: the session folder. Otherwise the folder the
+// earlier `cd`s lead to, absolute or relative to the session folder. `isKnown` false: a `cd`
+// named a folder that cannot be worked out here (an unset variable, `~`, a glob, no argument).
+export type Dir = { path: string | undefined; isKnown: boolean }
+export type Vars = Readonly<Record<string, string>>
+
 const CHANGES_DIRECTORY = /^(?:cd|pushd|chdir|set-location|sl)(?:\s|$)/i
+
+// `NAME=value` or `export NAME=value` alone in a segment sets a variable for the rest of
+// the command; `$NAME = 'value'` does in PowerShell. `NAME=1 cmd` sets it for `cmd` only,
+// and `$NAME` in that segment is still the old value: it is not an assignment here.
+const ASSIGN = /^(?:export\s+)?([A-Za-z_]\w*)=(.*)$/s
+const PS_ASSIGN = /^\$([A-Za-z_]\w*)\s*=\s*(.+)$/s
+const TOKENS = /"[^"]*"|'[^']*'|\S+/g
+
+// The name and the value it gets. `value` undefined: set to something that cannot be worked out.
+export const assignment = (raw: string, vars: Vars): { name: string; value?: string } | undefined => {
+  const text = raw.trim().replace(/[)}]+$/, '')
+  const shell = ASSIGN.exec(text)
+  const match = shell ?? PS_ASSIGN.exec(text)
+  if (!match) return undefined
+  const name = match[1] ?? ''
+  const tokens = (match[2] ?? '').match(TOKENS) ?? []
+  if (tokens.length > 1) return shell ? undefined : { name }
+  const read = readToken(tokens[0] ?? '', vars)
+  return read.why ? { name } : { name, value: read.text }
+}
+
+const cdTarget = (dir: Dir, segment: string, vars: Vars): Dir => {
+  const raw = (segment.match(TOKENS) ?? []).slice(1).find(w => !/^(?:-[A-Za-z]+|\/d)$/i.test(w))
+  const target = raw === undefined ? undefined : readToken(raw.replace(/\)+$/, ''), vars)
+  if (!dir.isKnown || !target || target.why || target.text === '' || target.text === '-') return { path: dir.path, isKnown: false }
+  return { path: dir.path === undefined ? target.text : resolvePath(dir.path, target.text), isKnown: true }
+}
 
 // Every risky segment of `command`, in order. An empty list means: not held.
 export const classify = (command: string): Risk[] => {
   const risks: Risk[] = []
   let hasCd = false
-  for (const raw of command.split(SEPARATORS)) {
+  let dir: Dir = { path: undefined, isKnown: true }
+  const vars: Record<string, string> = {}
+  const parts = command.split(new RegExp(`(${SEPARATORS.source})`))
+  for (let i = 0; i < parts.length; i += 2) {
+    const raw = parts[i] ?? ''
+    const set = assignment(stripGrouping(raw), vars)
+    if (set) {
+      // `D=$(pwd)` is split at `$(`: what D gets is the output of the nested command.
+      const isNested = parts[i + 1] === '$(' || parts[i + 1] === '`'
+      if (set.value === undefined || isNested) delete vars[set.name]
+      else vars[set.name] = set.value
+      continue
+    }
     const segment = stripPrefix(raw)
     if (!segment) continue
     const rule = RULES.find(r => r.regex.test(segment) && !r.unless?.test(segment))
-    if (rule) risks.push({ kind: rule.kind, title: rule.title, preview: rule.preview, segment, hasCd })
-    if (CHANGES_DIRECTORY.test(segment)) hasCd = true
+    if (rule) risks.push({ kind: rule.kind, title: rule.title, preview: rule.preview, segment, hasCd, dir, vars: { ...vars } })
+    if (CHANGES_DIRECTORY.test(segment)) {
+      hasCd = true
+      dir = cdTarget(dir, segment, vars)
+    }
   }
   return risks
+}
+
+// `( D=x` -> `D=x`: a group opened before an assignment.
+const stripGrouping = (raw: string) => raw.replace(/^\s*[({]\s*/, '')
+
+// ---- Words with variables ---------------------------------------------------------
+
+const VAR_REF = /\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))/g
+
+// What one word of the command stands for. `why` set: it cannot be worked out here.
+// `unset`: the variables it uses that no earlier segment set. A single-quoted word is taken
+// as it is. A glob keeps its text, so the folder it lies in can still be looked at.
+export type Token = { text: string; why?: 'var' | 'home' | 'glob'; unset?: string[] }
+
+export const readToken = (raw: string, vars: Vars): Token => {
+  if (/^'.*'$/s.test(raw)) return { text: raw.slice(1, -1) }
+  const typed = raw.replace(/^"|"$/g, '')
+  const unset: string[] = []
+  const text = typed.replace(VAR_REF, (whole, braced?: string, bare?: string) => {
+    const name = braced ?? bare ?? ''
+    const value = vars[name]
+    if (value === undefined) unset.push(name)
+    return value ?? whole
+  })
+  if (unset.length) return { text: typed, why: 'var', unset }
+  // `$(`, `$1`, `${X:-y}`, `%X%` and backticks are not worked out.
+  if (/[$%`]/.test(text)) return { text: typed, why: 'var', unset: [] }
+  if (/^~/.test(text)) return { text, why: 'home' }
+  if (/[*?[\]{}]/.test(text)) return { text, why: 'glob' }
+  return { text }
+}
+
+// The folder a glob lies in: the part before the segment that holds the first wildcard.
+// '' means the folder the command runs in.
+export const globBase = (glob: string) => {
+  const head = glob.slice(0, glob.search(/[*?[\]{}]/))
+  const cut = Math.max(head.lastIndexOf('/'), head.lastIndexOf('\\'))
+  return cut < 0 ? '' : head.slice(0, cut + 1)
 }
 
 // ---- Preview plans: what to read, from the segment's own words --------------------
@@ -198,31 +308,65 @@ export const pushPlan = (segment: string): PushPlan => {
 export const branchTargets = (segment: string): string[] =>
   (gitArgs(segment, 'branch') ?? []).filter(a => !a.startsWith('-') && SAFE_NAME.test(a)).slice(0, 3)
 
-export type PathArgs = { paths: string[]; skipped: string[] }
+// A word that is not looked at, as typed, with why. `base`: for a glob, the folder it lies in.
+export type Skipped = { token: string; why: 'var' | 'home' | 'glob'; unset?: string[]; base?: string }
+export type PathArgs = { paths: string[]; skipped: Skipped[] }
 
 // Flags of Remove-Item that take a value which is not a path.
 const VALUE_FLAGS = /^-(?:include|exclude|filter|credential|stream)$/i
 
-// The plain path arguments of a delete command. A glob, a variable or `~` cannot be
-// resolved here and is listed as skipped.
-export const pathArgs = (segment: string): PathArgs => {
-  const tokens = words(segment).slice(1)
+// The path arguments of a delete command, with the variables of `vars` filled in. A glob,
+// an unset variable or `~` cannot be resolved here and is listed as skipped.
+export const pathArgs = (segment: string, vars: Vars = {}): PathArgs => {
+  const tokens = (segment.match(TOKENS) ?? []).slice(1)
   const paths: string[] = []
-  const skipped: string[] = []
+  const skipped: Skipped[] = []
   for (let i = 0; i < tokens.length; i++) {
-    const token = tokens[i] ?? ''
-    if (VALUE_FLAGS.test(token)) i++
-    else if (token === '' || token.startsWith('-') || /^\/[a-zA-Z]$/.test(token) || /^\d*[<>]/.test(token)) continue
-    else if (/[*?[\]$%`{}]|^~/.test(token)) skipped.push(token)
-    else paths.push(token)
+    const raw = (tokens[i] ?? '').replace(/\)+$/, '')
+    const plain = raw.replace(/^["']|["']$/g, '')
+    if (VALUE_FLAGS.test(plain)) i++
+    else if (plain === '' || plain.startsWith('-') || /^\/[a-zA-Z]$/.test(plain) || /^\d*[<>]/.test(plain)) continue
+    else {
+      const token = readToken(raw, vars)
+      if (!token.why) paths.push(token.text)
+      else if (token.why === 'glob') skipped.push({ token: plain, why: 'glob', base: globBase(token.text) })
+      else skipped.push({ token: plain, why: token.why, ...(token.unset ? { unset: token.unset } : {}) })
+    }
   }
   return { paths, skipped }
 }
 
-const isAbsolute = (path: string) => /^(?:[A-Za-z]:)?[\\/]/.test(path)
+export const isAbsolute = (path: string) => /^(?:[A-Za-z]:)?[\\/]/.test(path)
+const isWindowsPath = (path: string | undefined) => path !== undefined && /^[A-Za-z]:[\\/]/.test(path)
 
 // A relative path belongs to the session folder. `cwd` joins with `/`, which Windows accepts too.
 export const resolvePath = (cwd: string, path: string) => (isAbsolute(path) ? path : `${cwd.replace(/[\\/]+$/, '')}/${path}`)
+
+// Git Bash on Windows writes `C:\x` as `/c/x`. When the session folder is a Windows path, such a
+// path is turned back into `C:/x`, so the engine can look at it. Any other `/x` path on Windows
+// is a folder of Git Bash itself (`/tmp`, `/usr`): undefined, it cannot be looked at.
+export const nativePath = (path: string, cwd: string | undefined): string | undefined => {
+  if (!isWindowsPath(cwd) || !/^[\\/]/.test(path) || /^[\\/]{2}/.test(path)) return path
+  const drive = /^\/([A-Za-z])(?=\/|$)/.exec(path)
+  return drive ? `${(drive[1] ?? '').toUpperCase()}:${path.slice(2) || '/'}` : undefined
+}
+
+// The folder a segment runs in, as the engine can look at it. Undefined: it cannot be worked out.
+export const folderOf = (cwd: string | undefined, dir: Dir): string | undefined => {
+  if (!dir.isKnown) return undefined
+  if (dir.path === undefined) return cwd
+  const path = nativePath(dir.path, cwd)
+  if (path === undefined || isAbsolute(path)) return path
+  return cwd === undefined ? undefined : resolvePath(cwd, path)
+}
+
+// Where one path of a segment is. Undefined: it cannot be worked out.
+export const locate = (cwd: string | undefined, dir: Dir, path: string): string | undefined => {
+  const native = nativePath(path, cwd)
+  if (native === undefined || isAbsolute(native)) return native
+  const base = folderOf(cwd, dir)
+  return base === undefined ? undefined : resolvePath(base, native)
+}
 
 // ---- Preview text -----------------------------------------------------------------
 
@@ -312,20 +456,45 @@ export type PathFact =
   | { path: string; kind: 'link' }
   | { path: string; kind: 'dir'; entries: number; isCapped: boolean }
 
-export const previewPaths = (facts: readonly PathFact[], args: PathArgs, hasCd: boolean): string[] => {
+const factText = (f: PathFact) =>
+  f.kind === 'dir' ? `資料夾，裡面有 ${f.isCapped ? `${ENTRY_CAP}+` : f.entries} 個項目`
+  : f.kind === 'file' ? '檔案'
+  : f.kind === 'link' ? '捷徑（symbolic link；只刪捷徑本身，不會刪它指向的東西）'
+  : f.kind === 'other' ? '存在，但不是一般的檔案或資料夾'
+  : '找不到'
+
+// Where the relative paths of a segment are. `folder`: the folder after the earlier `cd`s, shown
+// only when a `cd` moved it. `isKnown` false: a `cd` named a folder that cannot be worked out.
+export type Place = { folder?: string; isKnown: boolean }
+
+// `globs`: for a skipped glob, what its folder is (by the glob's text).
+export const previewPaths = (facts: readonly PathFact[], args: PathArgs, place: Place, globs: Readonly<Record<string, PathFact>> = {}): string[] => {
   const out: string[] = []
-  if (hasCd) out.push('這串指令前面先用 cd 換了資料夾，所以後面寫的相對路徑查不到實際位置，沒辦法預覽。')
-  for (const f of facts) {
-    if (f.kind === 'dir') out.push(`${f.path}：資料夾，裡面有 ${f.isCapped ? `${ENTRY_CAP}+` : f.entries} 個項目`)
-    else if (f.kind === 'file') out.push(`${f.path}：檔案`)
-    else if (f.kind === 'link') out.push(`${f.path}：捷徑（symbolic link；只刪捷徑本身，不會刪它指向的東西）`)
-    else if (f.kind === 'other') out.push(`${f.path}：存在，但不是一般的檔案或資料夾`)
-    else out.push(`${f.path}：找不到`)
+  if (!place.isKnown) out.push('這串指令前面的 cd 用了查不出來的路徑（沒設定的變數、~ 或萬用字元），所以相對路徑沒辦法預覽。')
+  else if (place.folder) out.push(`前面先 cd 到 ${place.folder}，相對路徑以那裡為準。`)
+  for (const f of facts) out.push(`${f.path}：${factText(f)}`)
+  if (args.paths.length > facts.length) out.push(`還有 ${args.paths.length - facts.length} 個要刪的路徑沒有檢查（超過一次檢查的上限，或查不到實際位置）`)
+  for (const s of args.skipped.slice(0, MAX_SHOWN)) {
+    if (s.why === 'var') {
+      const names = (s.unset ?? []).map(n => `$${n}`).join('、')
+      out.push(`${s.token}：${names ? `${names} 在這串指令裡沒有設定值` : '用了這裡算不出來的寫法'}，查不出指到哪裡，沒有預覽`)
+    } else if (s.why === 'home') out.push(`${s.token}：用了 ~（家目錄），這裡查不到實際位置，沒有預覽`)
+    else {
+      const base = globs[s.token]
+      out.push(base ? `${s.token}：有萬用字元，沒辦法逐一列出；符合的項目都在 ${base.path} 底下（${factText(base)}）` : `${s.token}：有萬用字元，沒辦法逐一列出，沒有預覽`)
+    }
   }
-  if (args.paths.length > facts.length) out.push(`還有 ${args.paths.length - facts.length} 個要刪的路徑沒有檢查（指令裡 rm 後面寫的那些）`)
-  if (args.skipped.length) out.push(`沒有預覽（路徑裡有萬用字元或變數）：${args.skipped.slice(0, MAX_SHOWN).join(' ')}`)
-  return out.length ? out : [`${NO_PREVIEW}（指令裡沒有單純的路徑）`]
+  if (args.skipped.length > MAX_SHOWN) out.push(`……還有 ${args.skipped.length - MAX_SHOWN} 個路徑沒列出`)
+  return out.length ? out : [`${NO_PREVIEW}（指令裡沒有路徑）`]
 }
+
+// A deploy to production. `folder`: where it deploys from; `fact`: what the engine found there.
+export const previewDeploy = (place: Place, fact?: PathFact): string[] => [
+  '會直接發布到正式環境，所有使用者馬上會看到新版本。這個檢查看不出新版本跟線上版本差在哪裡。',
+  !place.isKnown
+    ? '查不出從哪個資料夾發布（前面的 cd 用了沒設定的變數、~ 或萬用字元）。'
+    : `從這個資料夾發布：${place.folder ?? '目前的工作資料夾'}${fact?.kind === 'missing' ? '（找不到這個資料夾）' : ''}`,
+]
 
 // ---- The dialog -------------------------------------------------------------------
 

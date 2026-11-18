@@ -13,9 +13,9 @@ import type { EngineInterface, PluginOptions, Register, RenderElement, ToolCallR
 import {
   blastRadius, branchTargets, buildQuestion, cleanDryRun, CANCEL, classify, denyReason, DIALOG_HEADER, ENTRY_CAP, GIT_READ, hasGitOptions, isProceed,
   MAX_PATHS, MAX_RISKS_PREVIEWED, NO_GIT_PREVIEW, NO_PREVIEW, OUTPUT_CAP, pathArgs, previewBranch, previewClean, previewPaths, previewPush,
-  previewStash, previewStatus, PROCEED, pushPlan, resolvePath, STEP_TIMEOUT_MS,
+  folderOf, locate, previewDeploy, previewStash, previewStatus, PROCEED, pushPlan, STEP_TIMEOUT_MS,
 } from './blast-radius'
-import type { GitOut, PathFact, Risk } from './blast-radius'
+import type { GitOut, PathFact, Place, Risk } from './blast-radius'
 import { cacheKeeper } from './cache-keeper'
 import type { Feature, FeatureContext, Lock, ModelAsk, ModelReply, Step } from './feature'
 import { runMods } from './mods-command'
@@ -356,44 +356,62 @@ async function describePath($: EngineInterface, path: string, resolved: string):
 // becomes "no preview available". Never throws, so the dialog is always shown.
 async function previewRisk($: EngineInterface, risk: Risk, cwd: string | undefined): Promise<string[]> {
   try {
+    // `cd x && rm -rf y`: y is looked at in x. Only a folder that cannot be worked out is skipped.
+    const folder = folderOf(cwd, risk.dir)
+    const place: Place = { isKnown: risk.dir.isKnown, ...(risk.dir.path !== undefined ? { folder: folder ?? risk.dir.path } : {}) }
+
     if (risk.preview === 'paths') {
-      const args = pathArgs(risk.segment)
-      // `cd x && rm -rf y`: y is not in the session folder, so it is not looked at.
-      const looked = risk.hasCd || cwd === undefined ? [] : args.paths.slice(0, MAX_PATHS)
-      const facts = await Promise.all(looked.map(path => describePath($, path, resolvePath(cwd as string, path))))
-      return previewPaths(facts, args, risk.hasCd)
+      const args = pathArgs(risk.segment, risk.vars)
+      const found = args.paths.slice(0, MAX_PATHS).flatMap(path => {
+        const at = locate(cwd, risk.dir, path)
+        return at === undefined ? [] : [{ path, at }]
+      })
+      const facts = await Promise.all(found.map(({ path, at }) => describePath($, path, at)))
+      const globs: Record<string, PathFact> = {}
+      for (const s of args.skipped.filter(s => s.base !== undefined).slice(0, MAX_RISKS_PREVIEWED)) {
+        const at = s.base ? locate(cwd, risk.dir, s.base) : folder
+        if (at !== undefined) globs[s.token] = await describePath($, s.base || (folder ?? '.'), at)
+      }
+      return previewPaths(facts, args, place, globs)
     }
 
-    // Every other kind runs git. The command's own git options (-C, -c) are not followed.
+    if (risk.preview === 'deploy') {
+      return previewDeploy(place, folder === undefined ? undefined : await describePath($, folder, folder))
+    }
+
+    // Every other kind runs git, in the folder the earlier `cd`s lead to. The command's own git
+    // options (-C, -c) are not followed.
+    const here = risk.dir.path === undefined ? cwd : folder
+    if (!risk.dir.isKnown || (risk.dir.path !== undefined && here === undefined)) return [`${NO_PREVIEW}（前面的 cd 用了查不出來的路徑，不知道是哪個 git 資料夾）`]
     if (hasGitOptions(risk.segment)) return [NO_GIT_PREVIEW]
 
     if (risk.preview === 'status-all' || risk.preview === 'status-worktree') {
-      const [status, shortstat] = await Promise.all([git($, ['status', '--porcelain'], cwd), git($, ['diff', '--shortstat', '--no-ext-diff', 'HEAD'], cwd)])
+      const [status, shortstat] = await Promise.all([git($, ['status', '--porcelain'], here), git($, ['diff', '--shortstat', '--no-ext-diff', 'HEAD'], here)])
       return previewStatus(status, shortstat, risk.preview === 'status-all' ? 'all' : 'worktree')
     }
 
     if (risk.preview === 'clean') {
       const dryRun = cleanDryRun(risk.segment)
-      return dryRun ? previewClean(await git($, dryRun, cwd)) : [NO_GIT_PREVIEW]
+      return dryRun ? previewClean(await git($, dryRun, here)) : [NO_GIT_PREVIEW]
     }
 
     if (risk.preview === 'push') {
       const plan = pushPlan(risk.segment)
       const [branch, upstream, count, log] = await Promise.all([
-        git($, ['rev-parse', '--abbrev-ref', 'HEAD'], cwd),
-        git($, ['rev-parse', '--abbrev-ref', '@{u}'], cwd),
-        plan.range ? git($, ['rev-list', '--count', plan.range], cwd) : undefined,
-        plan.range ? git($, ['log', '--oneline', '-n', '10', plan.range], cwd) : undefined,
+        git($, ['rev-parse', '--abbrev-ref', 'HEAD'], here),
+        git($, ['rev-parse', '--abbrev-ref', '@{u}'], here),
+        plan.range ? git($, ['rev-list', '--count', plan.range], here) : undefined,
+        plan.range ? git($, ['log', '--oneline', '-n', '10', plan.range], here) : undefined,
       ])
       return previewPush({ branch, upstream, count, log, plan })
     }
 
     if (risk.preview === 'branch') {
-      const items = await Promise.all(branchTargets(risk.segment).map(async name => ({ name, count: await git($, ['rev-list', '--count', `HEAD..${name}`], cwd) })))
+      const items = await Promise.all(branchTargets(risk.segment).map(async name => ({ name, count: await git($, ['rev-list', '--count', `HEAD..${name}`], here) })))
       return previewBranch(items)
     }
 
-    return previewStash(await git($, ['stash', 'list'], cwd))
+    return previewStash(await git($, ['stash', 'list'], here))
   } catch (error) {
     $.ui.log(`mod-pack: blast-radius preview failed: ${String(error)}`)
     return [NO_PREVIEW]
@@ -428,7 +446,7 @@ async function guardShell($: EngineInterface, options: PluginOptions, command: s
   const cwd = await $.session.cwd().catch(() => undefined)
   const preview: string[] = []
   for (const risk of risks.slice(0, MAX_RISKS_PREVIEWED)) preview.push(...(await previewRisk($, risk, cwd)))
-  if (risks.length > MAX_RISKS_PREVIEWED) preview.push(`...and ${risks.length - MAX_RISKS_PREVIEWED} more risky parts of the command`)
+  if (risks.length > MAX_RISKS_PREVIEWED) preview.push(`……還有 ${risks.length - MAX_RISKS_PREVIEWED} 個有風險的部分沒有預覽`)
 
   const answer = await askPerson($, options, buildQuestion(command, risks, preview))
   return isProceed(answer) ? proceed() : { deny: denyReason(answer, risks.map(r => r.kind)) }

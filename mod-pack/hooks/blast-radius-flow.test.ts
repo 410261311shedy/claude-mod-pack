@@ -225,10 +225,11 @@ test('rm -rf: each plain path is looked at; a glob is listed as skipped; entries
   expect(question).toContain('build：資料夾，裡面有 5 個項目')
   expect(question).toContain('a.txt：檔案')
   expect(question).toContain('gone：找不到')
-  expect(question).toContain('沒有預覽（路徑裡有萬用字元或變數）：*.log')
+  // a glob is not listed one by one; the folder it lies in is looked at instead
+  expect(question).toContain('*.log：有萬用字元，沒辦法逐一列出；符合的項目都在 /work 底下')
   // the symbolic link is an entry, and it is not entered
   expect(w.lists).toEqual(['/work/build', '/work/build/sub'])
-  expect(w.stats).toEqual(['/work/build', '/work/a.txt', '/work/gone'])
+  expect(w.stats).toEqual(['/work/build', '/work/a.txt', '/work/gone', '/work'])
 })
 
 test('rm -rf on a directory with more than 1000 entries: the count is capped and the walk stops', async ($, on) => {
@@ -249,11 +250,67 @@ test('rm -rf on a symbolic link: reported as a link, its target is not listed', 
   expect(w.lists).toEqual([])
 })
 
-test('an earlier cd: relative paths are not resolved against the session folder', async ($, on) => {
+test('an earlier cd: relative paths are looked at in the folder the cd led to', async ($, on) => {
   const w = world(on, { reply: say('取消'), fs: { stat: () => DIR } })
   await $.tool.call(bash('cd elsewhere && rm -rf build'))
-  expect(w.questions[0]?.question).toContain('這串指令前面先用 cd 換了資料夾')
+  expect(w.questions[0]?.question).toContain('前面先 cd 到 /work/elsewhere，相對路徑以那裡為準。')
+  expect(w.questions[0]?.question).toContain('build：資料夾')
+  expect(w.stats).toEqual(['/work/elsewhere/build'])
+})
+
+test('a cd that cannot be worked out: relative paths are not looked at, absolute ones still are', async ($, on) => {
+  const w = world(on, { reply: say('取消'), fs: { stat: () => FILE } })
+  await $.tool.call(bash('cd $SOMEWHERE && rm -rf build /tmp/x'))
+  expect(w.questions[0]?.question).toContain('cd 用了查不出來的路徑')
+  expect(w.stats).toEqual(['/tmp/x'])
+})
+
+test('a variable set earlier in the command is filled in, and the dialog shows the real path', async ($, on) => {
+  const w = world(on, { reply: say('取消'), fs: { stat: path => (path === '/scratch/out/assets' ? DIR : undefined), list: () => [entry('a.js'), entry('b.css')] } })
+  await $.tool.call(bash('cd /repo && npm run build && D=/scratch/out && rm -rf $D/assets && cp -r dist/* $D/'))
+  expect(w.questions[0]?.question).toContain('/scratch/out/assets：資料夾，裡面有 2 個項目')
+  expect(w.questions[0]?.question).not.toContain('沒有預覽')
+  expect(w.stats).toEqual(['/scratch/out/assets'])
+})
+
+test('an unset variable is named in the dialog', async ($, on) => {
+  const w = world(on, { reply: say('取消') })
+  await $.tool.call(bash('rm -rf "$OUT_DIR/assets"'))
+  expect(w.questions[0]?.question).toContain('$OUT_DIR/assets：$OUT_DIR 在這串指令裡沒有設定值')
   expect(w.stats).toEqual([])
+})
+
+test('vercel --prod: held, the dialog says it goes to production and where it deploys from', async ($, on) => {
+  const w = world(on, { reply: say('取消'), fs: { stat: () => DIR } })
+  const r = await $.tool.call(bash('D=/scratch/out && (cd $D && vercel deploy --prod --yes 2>&1 | grep Aliased)'))
+  const { question } = w.questions[0]!
+  expect(question).toContain('原因：發布到正式環境（vercel --prod）')
+  expect(question).toContain('會直接發布到正式環境')
+  expect(question).toContain('從這個資料夾發布：/scratch/out')
+  expect(w.stats).toEqual(['/scratch/out'])
+  expect(w.reached).toEqual([])
+  expect(JSON.stringify(r)).toContain('deny')
+})
+
+test('a preview deploy is not held', async ($, on) => {
+  const w = world(on)
+  await $.tool.call(bash('vercel deploy --yes'))
+  expect(w.questions).toEqual([])
+  expect(w.reached).toEqual(['vercel deploy --yes'])
+})
+
+test('cd /repo && git reset --hard: git runs in /repo, not in the session folder', async ($, on) => {
+  const w = world(on, { reply: say('取消'), git: args => (args.includes('status') ? ' M a.ts\n' : '') })
+  await $.tool.call(bash('cd /repo && git reset --hard'))
+  expect(w.runs.length).toBeGreaterThan(0)
+  expect(w.runs.every(r => r.cwd === '/repo')).toBe(true)
+})
+
+test('cd to a folder that cannot be worked out && git reset --hard: no git runs, the dialog says why', async ($, on) => {
+  const w = world(on, { reply: say('取消') })
+  await $.tool.call(bash('cd "$REPO" && git reset --hard'))
+  expect(w.runs).toEqual([])
+  expect(w.questions[0]?.question).toContain('不知道是哪個 git 資料夾')
 })
 
 test('an absolute path is looked at as it is', async ($, on) => {

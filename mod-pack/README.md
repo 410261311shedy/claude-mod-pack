@@ -323,14 +323,15 @@ The preview is best effort. Each git step has its own 3 second limit and an outp
 
 | Command | Preview |
 | --- | --- |
-| `rm`, `rmdir`, `del`, `Remove-Item` | For each plain path (up to 8): not found, file, symbolic link, or directory with an entry count over every level. The count stops at 1000 ("1000+"). A symbolic link is never entered. Globs, variables and `~` are listed as not previewed. After a `cd` in the same command, relative paths are not looked at. |
+| `rm`, `rmdir`, `del`, `Remove-Item` | For each plain path (up to 8): not found, file, symbolic link, or directory with an entry count over every level. The count stops at 1000 ("1000+"). A symbolic link is never entered. A variable set earlier in the same command (`D=/x && rm -rf $D/y`, or `$D = 'x'` in PowerShell) is filled in; a variable that is not set there, `$(...)`, `%X%` and `~` are named as not previewed. For a glob, the folder it lies in is looked at. After a `cd` in the same command, relative paths are looked at in the folder the `cd` led to; a `cd` to a folder that cannot be worked out leaves them not looked at. On Windows a Git Bash path `/c/x` is looked at as `C:/x`. |
 | `git reset --hard`, `git checkout -- .`, `git restore .` | `git status --porcelain` count and the first 10 paths, and `git diff --shortstat HEAD`. Untracked files are named as not touched. |
 | `git clean` | `git clean -n` with the same flags: count and the first 10 paths. |
 | `git push --force` | Current branch, upstream, and the commits on the remote that the branch lacks, from the last fetch. A count only for `git push -f [remote] [branch]`. |
 | `git branch -D` | For up to 3 names: commits not in the current branch. |
 | `git stash drop`, `clear` | The stash list. |
+| `vercel --prod`, `vercel promote`, `netlify deploy --prod`, `wrangler deploy`, `firebase deploy`, `fly deploy` | That it goes to production, and the folder it deploys from. It cannot show what differs from the live version. A preview deploy (`vercel deploy` without `--prod`), `wrangler deploy --dry-run` and `--env` other than production are not held. |
 
-The previews only read. They run `git status`, `git diff`, `git clean -n`, `git rev-parse`, `git rev-list`, `git log` and `git stash list` as an argument list (no shell) in the session folder. The git options of the command itself (`-C`, `-c`) are not passed on: a `-c core.fsmonitor=...` would run code before the person said yes. Outside a git repository, or with git missing, the preview says "no preview available".
+The previews only read. They run `git status`, `git diff`, `git clean -n`, `git rev-parse`, `git rev-list`, `git log` and `git stash list` as an argument list (no shell) in the session folder, or in the folder an earlier `cd` of the same command led to. When that folder cannot be worked out, no git runs. The git options of the command itself (`-C`, `-c`) are not passed on: a `-c core.fsmonitor=...` would run code before the person said yes. Outside a git repository, or with git missing, the preview says "no preview available".
 
 Non-interactive runs fail closed. `$.ui.ask` rejects when nobody can be asked (a `claude -p` run), and Blast Radius turns that into a denial. So a `claude -p` run denies every risky command. It never runs one unasked.
 
@@ -340,7 +341,7 @@ Switch it off: `/mods off blast-radius` (at once, no reload), or set `blastRadiu
 
 Limits:
 
-- It is a safety net, not a permission system. It sees the text of the command. It does not catch an alias, a script that calls `rm`, a command built from variables (`rm -rf "$DIR"`, `eval "$cmd"`), other quoting tricks, or destructive commands outside the table (`find -delete`, `dd`, `mkfs`, a `>` redirect over a file, `git checkout -f`).
+- It is a safety net, not a permission system. It sees the text of the command. It does not catch an alias, a script that calls `rm`, a command built from variables (`$RM -rf x`, `eval "$cmd"`), other quoting tricks, or destructive commands outside the table (`find -delete`, `dd`, `mkfs`, a `>` redirect over a file, `git checkout -f`).
 - Text that only mentions a command is not held (`echo "rm -rf x"`, `grep rm -rf README`). Text in quotes that holds a separator can be a false positive (`echo "a; rm -rf x"`). That is accepted.
 - It is wired to the Bash and PowerShell tool calls only. It does not look at other tools (Edit, Write, MCP tools). Whether the person's own `!` shell commands pass through `tool.call` was not checked.
 - The dialog comes before Claude Code's own permission prompt for the same command. In a mode that skips permission prompts, Blast Radius still asks.
