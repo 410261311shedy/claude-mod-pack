@@ -2,7 +2,7 @@
 
 A pack of small Claude Code mods in one plugin. Token Weather, Cache Keeper, Prompt Queue and Wait What draw in the band above the prompt. The mods that draw there share that band without overwriting each other, or other plugins. Blast Radius and Ship Gate draw nothing: they ask a question, and Ship Gate can also deny a commit. Snake draws a pane of its own, not a band row. `/mods` turns each one on or off. Wait What is the one mod that spends model tokens, and it is off by default. Prompt Queue is the one mod that sends prompts by itself: read its security note.
 
-Status: version 0.1.0. Seven mods exist. The tests and `claude plugin validate` pass. Screenshots of a real terminal show Token Weather, Cache Keeper, Wait What and next-steps drawn together, the Blast Radius dialog, and the Snake pane. Ship Gate has been run only against a stubbed engine, not on a real screen. No person has yet pressed the Cache Keeper button, typed `/q` while a turn ran, or played Snake to a score. See "What is verified".
+Status: version 0.1.1. Seven mods exist. The tests and `claude plugin validate` pass. Screenshots of a real terminal show Token Weather, Cache Keeper, Wait What and next-steps drawn together, the Blast Radius dialog, and the Snake pane. Ship Gate has been run only against a stubbed engine, not on a real screen. No person has yet pressed the Cache Keeper button, typed `/q` while a turn ran, or played Snake to a score. See "What is verified".
 
 Requires Claude Code 2.1.287 or later. Mods are plugins of "function hooks", an early-access API that can change between releases.
 

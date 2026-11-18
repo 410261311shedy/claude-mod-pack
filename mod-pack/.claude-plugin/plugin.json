@@ -1,6 +1,6 @@
 {
   "name": "mod-pack",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A pack of small Claude Code mods that share the band above the prompt without overwriting each other. Turn each one on or off with /mods.",
   "author": {
     "name": "az9713"
