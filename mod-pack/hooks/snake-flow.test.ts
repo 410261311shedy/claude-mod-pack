@@ -143,7 +143,7 @@ const world = (on: any, init: Init = {}) => {
     const q = e.questions[0]
     const hold = w.holds.shift() ?? 0
     if (hold) await clock.sleep(hold)
-    return { result: { questions: e.questions, answers: { [q.question]: 'Proceed' } } } as any
+    return { result: { questions: e.questions, answers: { [q.question]: '執行' } } } as any
   })
   for (const tool of ['Bash', 'PowerShell'] as const) {
     on('tool.call', { tool }, (_$: any, e: any) => {

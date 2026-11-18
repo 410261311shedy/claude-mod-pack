@@ -25,7 +25,7 @@ const DIR = { kind: 'dir', size: 0, mtimeMs: 0, isLink: false }
 // (A second `on('process.run', ...)` in one test would be a repeat, so a test calls `world` once.)
 const world = (on: any, init: Partial<Config> = {}) => {
   const w = {
-    cfg: { reply: { say: 'Proceed' }, git: () => '', fs: {}, storeDown: false, bashThrows: false, ...init } as Config,
+    cfg: { reply: { say: '執行' }, git: () => '', fs: {}, storeDown: false, bashThrows: false, ...init } as Config,
     reached: [] as string[], // commands that got past Blast Radius to the stub below it
     questions: [] as { question: string; header: string; labels: string[] }[],
     runs: [] as { argv: string[]; cwd?: string }[],
@@ -101,16 +101,16 @@ test('the dialog: header, exactly two options Proceed and Cancel, the kind and t
   const w = world(on)
   await $.tool.call(bash('cd x && git push --force origin main'))
   const [asked] = w.questions
-  expect(asked?.header).toBe('Blast Radius')
-  expect(asked?.labels).toEqual(['Proceed', 'Cancel'])
-  expect(asked?.question).toContain('git push --force (rewrites remote history)')
+  expect(asked?.header).toBe('危險指令確認')
+  expect(asked?.labels).toEqual(['執行', '取消'])
+  expect(asked?.question).toContain('git push --force（覆蓋遠端的歷史）')
   expect(asked?.question).toContain('cd x && git push --force origin main')
-  expect(asked?.question).toContain('What would change')
-  expect(asked?.question.endsWith('Run it now?')).toBe(true)
+  expect(asked?.question).toContain('執行後會改變什麼')
+  expect(asked?.question.endsWith('要現在執行嗎？選「執行」才會跑，其他選項都當成取消。')).toBe(true)
 })
 
 test('risky command + Cancel: denied with a reason for Claude, and the command is never reached', async ($, on) => {
-  const w = world(on, { reply: say('Cancel') })
+  const w = world(on, { reply: say('取消') })
   const result: any = await $.tool.call(bash('rm -rf build'))
   expect(w.reached).toEqual([])
   expect(w.questions).toHaveLength(1)
@@ -135,7 +135,7 @@ test('risky command + nothing can ask (the ask rejects, as in a -p run): denied,
 
 test('risky command + any answer other than the label Proceed: denied', async ($, on) => {
   const w = world(on)
-  for (const text of ['sure, go ahead', 'proceed', '', 'Proceed, Cancel', ' Proceed']) {
+  for (const text of ['sure, go ahead', 'proceed', '', '執行, 取消', ' 執行']) {
     w.cfg.reply = say(text)
     const result: any = await $.tool.call(bash('rm -rf build'))
     expect([text, w.reached]).toEqual([text, []])
@@ -144,7 +144,7 @@ test('risky command + any answer other than the label Proceed: denied', async ($
 })
 
 test('safe command: no dialog, no git, no file system look, the command reaches the stub', async ($, on) => {
-  const w = world(on, { reply: say('Cancel') })
+  const w = world(on, { reply: say('取消') })
   const result: any = await $.tool.call(bash('git status && rm file.txt && ls -la'))
   expect(w.questions).toEqual([])
   expect(w.runs).toEqual([])
@@ -154,19 +154,19 @@ test('safe command: no dialog, no git, no file system look, the command reaches 
 })
 
 test('a tool that is not a shell tool is not looked at', async ($, on) => {
-  const w = world(on, { reply: say('Cancel') })
+  const w = world(on, { reply: say('取消') })
   const result: any = await $.tool.call({ tool: 'Read', file_path: 'rm -rf x' })
   expect(w.questions).toEqual([])
   expect(result.deny).toBeUndefined()
 })
 
 test('the PowerShell tool is guarded the same way', async ($, on) => {
-  const w = world(on, { reply: say('Cancel') })
+  const w = world(on, { reply: say('取消') })
   const denied: any = await $.tool.call({ tool: 'PowerShell', command: 'Remove-Item -Recurse -Force build' })
   expect(denied.deny).toContain('(remove-item)')
   expect(w.reached).toEqual([])
 
-  w.cfg.reply = say('Proceed')
+  w.cfg.reply = say('執行')
   await $.tool.call({ tool: 'PowerShell', command: 'Remove-Item -Recurse -Force build' })
   expect(w.reached).toEqual(['Remove-Item -Recurse -Force build'])
 })
@@ -174,7 +174,7 @@ test('the PowerShell tool is guarded the same way', async ($, on) => {
 // ---- the switch ----
 
 test('/mods off blast-radius: a risky command passes at once with no dialog; /mods on asks again', async ($, on) => {
-  const w = world(on, { reply: say('Cancel') })
+  const w = world(on, { reply: say('取消') })
 
   const off = await $.command.run(slash('off blast-radius'))
   expect(off.text).toBe('mod-pack: blast-radius is OFF.')
@@ -190,7 +190,7 @@ test('/mods off blast-radius: a risky command passes at once with no dialog; /mo
 })
 
 test('the blastRadius setting off: no dialog. A /mods on choice beats the setting.', { options: { blastRadius: false } }, async ($, on) => {
-  const w = world(on, { reply: say('Cancel') })
+  const w = world(on, { reply: say('取消') })
   await $.tool.call(bash('git reset --hard'))
   expect(w.questions).toEqual([])
   expect(w.reached).toEqual(['git reset --hard'])
@@ -214,7 +214,7 @@ test('/mods lists Blast Radius ON by default, with its text, and no token or sou
 
 test('rm -rf: each plain path is looked at; a glob is listed as skipped; entries counted at every level', async ($, on) => {
   const w = world(on, {
-    reply: say('Cancel'),
+    reply: say('取消'),
     fs: {
       stat: path => (path === '/work/build' ? DIR : path === '/work/a.txt' ? FILE : undefined),
       list: path => (path === '/work/build' ? [entry('x.o'), entry('y.o'), entry('sub', 'dir'), entry('lnk', 'other', true)] : path === '/work/build/sub' ? [entry('z.o')] : []),
@@ -222,10 +222,10 @@ test('rm -rf: each plain path is looked at; a glob is listed as skipped; entries
   })
   await $.tool.call(bash('rm -rf build a.txt gone *.log'))
   const { question } = w.questions[0]!
-  expect(question).toContain('build: directory, 5 entries inside')
-  expect(question).toContain('a.txt: file')
-  expect(question).toContain('gone: not found')
-  expect(question).toContain('not previewed (glob or variable): *.log')
+  expect(question).toContain('build：資料夾，裡面有 5 個項目')
+  expect(question).toContain('a.txt：檔案')
+  expect(question).toContain('gone：找不到')
+  expect(question).toContain('沒有預覽（路徑裡有萬用字元或變數）：*.log')
   // the symbolic link is an entry, and it is not entered
   expect(w.lists).toEqual(['/work/build', '/work/build/sub'])
   expect(w.stats).toEqual(['/work/build', '/work/a.txt', '/work/gone'])
@@ -234,59 +234,59 @@ test('rm -rf: each plain path is looked at; a glob is listed as skipped; entries
 test('rm -rf on a directory with more than 1000 entries: the count is capped and the walk stops', async ($, on) => {
   const many = (n: number) => Array.from({ length: n }, (_, i) => entry(`f${i}`))
   const w = world(on, {
-    reply: say('Cancel'),
+    reply: say('取消'),
     fs: { stat: () => DIR, list: path => (path === '/work/big' ? [...many(600), entry('d1', 'dir'), entry('d2', 'dir')] : many(600)) },
   })
   await $.tool.call(bash('rm -rf big'))
-  expect(w.questions[0]?.question).toContain('big: directory, 1000+ entries inside')
+  expect(w.questions[0]?.question).toContain('big：資料夾，裡面有 1000+ 個項目')
   expect(w.lists.length).toBeLessThanOrEqual(3)
 })
 
 test('rm -rf on a symbolic link: reported as a link, its target is not listed', async ($, on) => {
-  const w = world(on, { reply: say('Cancel'), fs: { stat: () => ({ ...DIR, isLink: true }) } })
+  const w = world(on, { reply: say('取消'), fs: { stat: () => ({ ...DIR, isLink: true }) } })
   await $.tool.call(bash('rm -rf shortcut'))
-  expect(w.questions[0]?.question).toContain('shortcut: symbolic link')
+  expect(w.questions[0]?.question).toContain('shortcut：捷徑')
   expect(w.lists).toEqual([])
 })
 
 test('an earlier cd: relative paths are not resolved against the session folder', async ($, on) => {
-  const w = world(on, { reply: say('Cancel'), fs: { stat: () => DIR } })
+  const w = world(on, { reply: say('取消'), fs: { stat: () => DIR } })
   await $.tool.call(bash('cd elsewhere && rm -rf build'))
-  expect(w.questions[0]?.question).toContain('an earlier part of the command changes directory')
+  expect(w.questions[0]?.question).toContain('這串指令前面先用 cd 換了資料夾')
   expect(w.stats).toEqual([])
 })
 
 test('an absolute path is looked at as it is', async ($, on) => {
-  const w = world(on, { reply: say('Cancel'), fs: { stat: () => FILE } })
+  const w = world(on, { reply: say('取消'), fs: { stat: () => FILE } })
   await $.tool.call(bash('rm -rf /tmp/x'))
   expect(w.stats).toEqual(['/tmp/x'])
 })
 
 test('git reset --hard: runs git status and diff in the session folder, shows count and paths', async ($, on) => {
   const w = world(on, {
-    reply: say('Cancel'),
+    reply: say('取消'),
     git: args => (args.includes('status') ? ' M a.ts\nM  b.ts\n?? new.txt\n' : ' 2 files changed, 3 insertions(+)\n'),
   })
   await $.tool.call(bash('git reset --hard'))
   const { question } = w.questions[0]!
-  expect(question).toContain('2 tracked files with uncommitted changes would be overwritten')
+  expect(question).toContain('有 2 個檔案的修改會被蓋掉（還沒 commit')
   expect(question).toContain('   M a.ts')
   expect(question).toContain('2 files changed, 3 insertions(+)')
-  expect(question).toContain('1 untracked file not touched.')
+  expect(question).toContain('另有 1 個沒被 git 追蹤的檔案不會被動到。')
   expect(w.runs.every(r => r.argv[0] === 'git' && r.cwd === '/work')).toBe(true)
 })
 
 test('git clean -fd: previews with git clean -n and the same flags, never with force', async ($, on) => {
-  const w = world(on, { reply: say('Cancel'), git: () => 'Would remove build/\nWould remove tmp.log\n' })
+  const w = world(on, { reply: say('取消'), git: () => 'Would remove build/\nWould remove tmp.log\n' })
   await $.tool.call(bash('git clean -fd'))
-  expect(w.questions[0]?.question).toContain('2 untracked paths would be deleted (git clean -n)')
+  expect(w.questions[0]?.question).toContain('有 2 個沒被 git 追蹤的路徑會被刪掉（用 git clean -n 試跑的結果）')
   const clean = w.runs.find(r => r.argv.includes('clean'))!
   expect(clean.argv.slice(clean.argv.indexOf('clean'))).toEqual(['clean', '-n', '-d'])
 })
 
 test('git push --force: branch, upstream, and the commits the remote would lose', async ($, on) => {
   const w = world(on, {
-    reply: say('Cancel'),
+    reply: say('取消'),
     git: args => {
       if (args.includes('--count')) return '2\n'
       if (args.includes('log')) return 'abc1234 fix\ndef5678 add\n'
@@ -295,38 +295,38 @@ test('git push --force: branch, upstream, and the commits the remote would lose'
   })
   await $.tool.call(bash('git push --force'))
   const { question } = w.questions[0]!
-  expect(question).toContain('current branch: main, upstream: origin/main')
-  expect(question).toContain('2 commits on the remote would be lost')
+  expect(question).toContain('目前的分支：main，對應的遠端分支：origin/main')
+  expect(question).toContain('遠端有 2 個 commit 會消失')
   expect(question).toContain('abc1234 fix')
   expect(w.runs.some(r => r.argv.includes('HEAD..@{u}'))).toBe(true)
 })
 
 test('git branch -D and git stash drop get their previews', async ($, on) => {
-  const w = world(on, { reply: say('Cancel'), git: args => (args.includes('stash') ? 'stash@{0}: WIP on main: abc fix\n' : '3\n') })
+  const w = world(on, { reply: say('取消'), git: args => (args.includes('stash') ? 'stash@{0}: WIP on main: abc fix\n' : '3\n') })
   await $.tool.call(bash('git branch -D feature'))
-  expect(w.questions[0]?.question).toContain('branch feature: 3 commits not in the current branch')
+  expect(w.questions[0]?.question).toContain('分支 feature：有 3 個 commit 不在目前的分支裡')
   await $.tool.call(bash('git stash drop'))
-  expect(w.questions[1]?.question).toContain('1 stash exist')
+  expect(w.questions[1]?.question).toContain('目前有 1 筆暫存的修改')
 })
 
 test('git options in the command are not passed to the preview: no preview, still asks', async ($, on) => {
-  const w = world(on, { reply: say('Cancel') })
+  const w = world(on, { reply: say('取消') })
   await $.tool.call(bash('git -c core.fsmonitor=evil -C repo reset --hard'))
   expect(w.runs).toEqual([])
-  expect(w.questions[0]?.question).toContain('no preview available')
+  expect(w.questions[0]?.question).toContain('無法預覽')
 })
 
 test('not a git repository or git missing: "no preview available", the dialog is still shown', async ($, on) => {
-  const w = world(on, { reply: say('Cancel'), git: () => new Error('spawn git ENOENT') })
+  const w = world(on, { reply: say('取消'), git: () => new Error('spawn git ENOENT') })
   const result: any = await $.tool.call(bash('git reset --hard'))
   expect(w.questions).toHaveLength(1)
-  expect(w.questions[0]?.question).toContain('no preview available')
+  expect(w.questions[0]?.question).toContain('無法預覽')
   expect(result.deny).toBeDefined()
 })
 
 test('preview step throws: the dialog is still shown and the command still waits for the answer', async ($, on) => {
   const w = world(on, {
-    reply: say('Cancel'),
+    reply: say('取消'),
     git: () => new Error('git exploded'),
     fs: {
       stat: () => {
@@ -336,18 +336,18 @@ test('preview step throws: the dialog is still shown and the command still waits
   })
   const denied: any = await $.tool.call(bash('git reset --hard && rm -rf build'))
   expect(w.questions).toHaveLength(1)
-  expect(w.questions[0]?.question).toContain('no preview available')
+  expect(w.questions[0]?.question).toContain('無法預覽')
   expect(w.reached).toEqual([])
   expect(denied.deny).toBeDefined()
 
-  w.cfg.reply = say('Proceed')
+  w.cfg.reply = say('執行')
   await $.tool.call(bash('git reset --hard'))
   expect(w.questions).toHaveLength(2)
   expect(w.reached).toEqual(['git reset --hard'])
 })
 
 test('the previews run only read-only git: status, diff, clean -n, rev-parse, rev-list, log, stash list', async ($, on) => {
-  const w = world(on, { reply: say('Cancel') })
+  const w = world(on, { reply: say('取消') })
   for (const command of ['git reset --hard', 'git clean -xdf', 'git push -f origin main', 'git checkout -- .', 'git restore .', 'git branch -D a', 'git stash clear']) {
     await $.tool.call(bash(command))
   }
@@ -364,39 +364,39 @@ test('the previews run only read-only git: status, diff, clean -n, rev-parse, re
 })
 
 test('several risks in one command: one dialog, every kind named', async ($, on) => {
-  const w = world(on, { reply: say('Cancel') })
+  const w = world(on, { reply: say('取消') })
   await $.tool.call(bash('rm -rf a && git push -f && git stash clear'))
   expect(w.questions).toHaveLength(1)
   const { question } = w.questions[0]!
-  for (const part of ['recursive delete (rm -r)', 'git push --force', 'git stash drop / clear']) expect(question).toContain(part)
+  for (const part of ['整個資料夾刪除（rm -r）', 'git push --force', 'git stash drop／clear']) expect(question).toContain(part)
 })
 
 // ---- a crash in the guard ----
 
 test('the guard crashes: the .catch handler still asks, so a risky command is not silently allowed', async ($, on) => {
   // $.store.get throws, and the guard reads it first.
-  const w = world(on, { reply: say('Cancel'), storeDown: true })
+  const w = world(on, { reply: say('取消'), storeDown: true })
   const denied: any = await $.tool.call(bash('rm -rf build'))
   expect(w.questions).toHaveLength(1)
-  expect(w.questions[0]?.question).toContain('the Blast Radius check itself failed')
+  expect(w.questions[0]?.question).toContain('安全檢查自己出錯了')
   expect(w.reached).toEqual([])
   expect(denied.deny).toContain('cancelled')
 
-  w.cfg.reply = say('Proceed')
+  w.cfg.reply = say('執行')
   await $.tool.call(bash('rm -rf dist'))
   expect(w.questions).toHaveLength(2)
   expect(w.reached).toEqual(['rm -rf dist'])
 })
 
 test('the guard crashes on a safe command: the handler lets it through without asking', async ($, on) => {
-  const w = world(on, { reply: say('Cancel'), storeDown: true })
+  const w = world(on, { reply: say('取消'), storeDown: true })
   await $.tool.call(bash('ls -la'))
   expect(w.questions).toEqual([])
   expect(w.reached).toEqual(['ls -la'])
 })
 
 test('the command itself fails after Proceed: the handler does not ask a second time', async ($, on) => {
-  const w = world(on, { reply: say('Proceed'), bashThrows: true })
+  const w = world(on, { reply: say('執行'), bashThrows: true })
   await $.tool.call(bash('rm -rf build')).catch(() => undefined)
   expect(w.questions).toHaveLength(1)
 })

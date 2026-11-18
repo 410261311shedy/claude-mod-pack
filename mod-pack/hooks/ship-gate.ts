@@ -257,7 +257,7 @@ export const redactUrl = (url: string) => url.replace(/\/\/[^/@\s]+@/, '//***@')
 
 export const GITHUB_SLUG = /github\.com[:/]([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/
 
-export const NO_LOOK = 'not looked at'
+export const NO_LOOK = '沒有檢查'
 
 export type PublishFacts = {
   kind: PublishKind
@@ -280,61 +280,62 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 
 export const describePublish = (f: PublishFacts): string[] => {
   const out: string[] = []
-  if (!f.isFolderKnown) return ['the folder of the command could not be resolved (a variable or ~ in a cd or git -C), so nothing was looked at.']
+  if (!f.isFolderKnown) return ['查不出這個指令是在哪個資料夾執行（cd 或 git -C 後面用了變數或 ~），所以什麼都沒有檢查。']
 
+  const seen = (v: string) => ({ public: '公開', private: '私有', internal: '組織內部' })[v.toLowerCase()] ?? v.toLowerCase()
   if (f.kind === 'push') {
-    out.push(`remote ${f.remote ?? 'unknown'}: ${f.url ? redactUrl(f.url) : 'url not readable'}${f.visibility ? ` (${f.visibility.toLowerCase()})` : ' (visibility not readable)'}`)
+    out.push(`推送到遠端 ${f.remote ?? '（不明）'}：${f.url ? redactUrl(f.url) : '讀不到網址'}${f.visibility ? `（${seen(f.visibility)} repo）` : '（讀不到這個 repo 是公開還是私有）'}`)
   } else if (f.kind === 'create') {
-    out.push(`creates a repository: ${f.flag ?? 'no visibility flag (gh asks, or defaults to private)'}${f.hasSource ? '; pushes the local folder' : ''}`)
+    out.push(`會建立一個新的 repo：${f.flag ?? '指令沒寫公開或私有（gh 會問，或預設私有）'}${f.hasSource ? '；並把本機資料夾推上去' : ''}`)
   } else if (f.kind === 'visibility') {
-    out.push(`makes the repository public${f.visibility ? ` (now ${f.visibility.toLowerCase()})` : ''}`)
+    out.push(`會把 repo 改成公開${f.visibility ? `（現在是${seen(f.visibility)}）` : ''}`)
   } else {
-    out.push(`changes GitHub Pages: serves the repository files as a web page${f.visibility ? ` (repository is ${f.visibility.toLowerCase()})` : ''}`)
+    out.push(`會更改 GitHub Pages：把 repo 裡的檔案當成網頁公開${f.visibility ? `（這個 repo 是${seen(f.visibility)}）` : ''}`)
   }
 
   if (f.kind === 'push') {
-    if (f.log === undefined) out.push('unpushed commits: could not be listed.')
+    if (f.log === undefined) out.push('還沒推上去的 commit：列不出來。')
     else {
       const facts = parseLog(f.log, f.terms)
-      out.push(`${plural(facts.count, 'unpushed commit')}.`)
-      if (facts.offAddresses.length) out.push(`author or committer addresses that are not noreply addresses: ${facts.offAddresses.join(', ')}`)
-      else if (facts.count > 0) out.push('every author and committer address is a noreply address.')
-      if (facts.termCommits > 0) out.push(`${plural(facts.termCommits, 'commit')} with a personal string in an address or subject.`)
+      out.push(`有 ${facts.count} 個 commit 還沒推上去。`)
+      if (facts.offAddresses.length) out.push(`commit 的作者或提交者信箱不是 noreply 信箱（推上去會看得到）：${facts.offAddresses.join(', ')}`)
+      else if (facts.count > 0) out.push('每個 commit 的作者和提交者信箱都是 noreply 信箱。')
+      if (facts.termCommits > 0) out.push(`有 ${facts.termCommits} 個 commit 的信箱或標題裡出現個人資訊的字串。`)
     }
   }
 
   if (f.terms.length === 0) {
-    if (f.kind === 'push' || f.hasSource) out.push('personal strings: none to search for (no user name in the path, no non-noreply git e-mail, no shipGateTerms).')
+    if (f.kind === 'push' || f.hasSource) out.push('個人資訊字串：沒有可以搜尋的字（路徑裡沒有使用者名稱、git 信箱是 noreply、也沒有設定 shipGateTerms）。')
   } else if (f.grepRan) {
     const { total, shown } = parseHits(f.hits)
     out.push(
       total === 0
-        ? `personal strings (${f.terms.join(', ')}): no hit in the text files at HEAD.`
-        : `personal strings (${f.terms.join(', ')}): ${plural(total, 'line')} in the text files at HEAD${total > shown.length ? `, first ${shown.length}` : ''}:`,
+        ? `個人資訊字串（${f.terms.join(', ')}）：最新 commit 的文字檔裡沒有找到。`
+        : `個人資訊字串（${f.terms.join(', ')}）：最新 commit 的文字檔裡有 ${total} 行${total > shown.length ? `，下面列出前 ${shown.length} 行` : ''}：`,
     )
     out.push(...shown.map(l => `  ${l}`))
-    out.push('binary files (images) are not searched.')
-  } else if (f.kind === 'push' || f.hasSource) out.push(`personal strings (${f.terms.join(', ')}): ${NO_LOOK} (git grep failed, or nothing is committed yet).`)
+    out.push('圖片等二進位檔沒有搜尋。')
+  } else if (f.kind === 'push' || f.hasSource) out.push(`個人資訊字串（${f.terms.join(', ')}）：${NO_LOOK}（git grep 失敗，或還沒有任何 commit）。`)
   return out
 }
 
-export const SHIP_HEADER = 'Ship Gate' // 9 characters: the chip takes 12
+export const SHIP_HEADER = '推送前確認' // the chip takes 12 characters at most
 
 const shorten = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}...` : text)
 
 export const publishTitle = (kind: PublishKind) =>
-  ({ push: 'git push (publishes commits)', create: 'gh repo create (creates a repository)', pages: 'gh api pages (changes GitHub Pages)', visibility: 'gh repo edit --visibility public' })[kind]
+  ({ push: 'git push（把 commit 推到遠端）', create: 'gh repo create（建立新的 repo）', pages: 'gh api pages（更改 GitHub Pages）', visibility: 'gh repo edit --visibility public（把 repo 改成公開）' })[kind]
 
 export const buildPublishQuestion = (command: string, kinds: readonly PublishKind[], facts: readonly string[]): string =>
   [
-    `Ship Gate holds this command: ${kinds.map(publishTitle).join('; ')}.`,
+    `這個指令先被擋下來，等你確認（Ship Gate 推送前檢查）。原因：${kinds.map(publishTitle).join('；')}。`,
     '',
     `  ${shorten(command, 400)}`,
     '',
-    'What it would publish (a best-effort, read-only check):',
+    '執行後會公開或送出什麼（只讀取、沒有動任何東西；能查多少算多少）：',
     ...facts.map(l => `  ${l}`),
     '',
-    'Run it now?',
+    '要現在執行嗎？選「執行」才會跑，其他選項都當成取消。',
   ].join('\n')
 
 // What Claude reads when the command is refused.

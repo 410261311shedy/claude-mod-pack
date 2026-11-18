@@ -452,7 +452,7 @@ async function guardShellFailed($: EngineInterface, options: PluginOptions, comm
   if (risks?.length === 0) return proceed()
 
   const why = failure.message ? ` (${failure.message.slice(0, 120)})` : ''
-  const question = buildQuestion(command, risks ?? [], [`${NO_PREVIEW}: the Blast Radius check itself failed${why}.`])
+  const question = buildQuestion(command, risks ?? [], [`${NO_PREVIEW}：安全檢查自己出錯了${why}。`])
   const answer = await askPerson($, options, question)
   return isProceed(answer) ? proceed() : { deny: denyReason(answer, (risks ?? []).map(r => r.kind)) }
 }
@@ -553,7 +553,7 @@ async function publishFacts($: EngineInterface, options: PluginOptions, publish:
     })
   } catch (error) {
     $.ui.log(`mod-pack: ship-gate facts failed: ${String(error)}`)
-    return ['the check of the command failed, so nothing was looked at.']
+    return ['對這個指令的檢查出錯了，所以什麼都沒有檢查。']
   }
 }
 

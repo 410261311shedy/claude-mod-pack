@@ -50,33 +50,33 @@ const re = (source: string, flags = '') => new RegExp(source, flags)
 
 export const RULES: readonly Rule[] = [
   // Delete. `rm -f file` and `rm file` (no recursion) are NOT held: one named file at a time.
-  { kind: 'rm-recursive', title: 'recursive delete (rm -r)', preview: 'paths',
+  { kind: 'rm-recursive', title: '整個資料夾刪除（rm -r）', preview: 'paths',
     regex: re(String.raw`^(?:\S*[\\/])?rm(?:\.exe)?${ARGS}\s+(?:-[fiIrRdv]*[rR][fiIrRdv]*|--recursive)${END}`) },
-  { kind: 'rmdir-windows', title: 'recursive delete (rmdir /s)', preview: 'paths',
+  { kind: 'rmdir-windows', title: '整個資料夾刪除（rmdir /s）', preview: 'paths',
     regex: re(String.raw`^(?:rmdir|rd)${ARGS}\s+/s(?=[\s/]|$)`, 'i') },
-  { kind: 'del-windows', title: 'recursive delete (del /s)', preview: 'paths',
+  { kind: 'del-windows', title: '整個資料夾刪除（del /s）', preview: 'paths',
     regex: re(String.raw`^(?:del|erase)${ARGS}\s+/s(?=[\s/]|$)`, 'i') },
-  { kind: 'remove-item', title: 'recursive delete (Remove-Item -Recurse)', preview: 'paths',
+  { kind: 'remove-item', title: '整個資料夾刪除（Remove-Item -Recurse）', preview: 'paths',
     regex: re(String.raw`^(?:remove-item|ri|rm|del|erase|rd|rmdir)${ARGS}\s+-r[a-z]*(?=[\s:]|$)`, 'i') },
 
   // Git: discards work that has no copy.
-  { kind: 'git-reset-hard', title: 'git reset --hard', preview: 'status-all',
+  { kind: 'git-reset-hard', title: 'git reset --hard（丟掉還沒 commit 的修改）', preview: 'status-all',
     regex: re(String.raw`${GIT}reset${ARGS}\s+--hard${END}`) },
-  { kind: 'git-clean', title: 'git clean (deletes untracked files)', preview: 'clean',
+  { kind: 'git-clean', title: 'git clean（刪掉沒被 git 追蹤的檔案）', preview: 'clean',
     regex: re(String.raw`${GIT}clean${ARGS}\s+(?:-[a-zA-Z]*[fdxX][a-zA-Z]*|--force)${END}`),
     unless: re(String.raw`\s(?:-[a-zA-Z]*n[a-zA-Z]*|--dry-run)${END}`) },
   // `--force-with-lease` is held too: it is safer, but it still overwrites remote history.
-  { kind: 'git-push-force', title: 'git push --force (rewrites remote history)', preview: 'push',
+  { kind: 'git-push-force', title: 'git push --force（覆蓋遠端的歷史）', preview: 'push',
     regex: re(String.raw`${GIT}push${ARGS}\s+(?:-[a-zA-Z]*f[a-zA-Z]*|--force(?:-with-lease|-if-includes)?(?:=\S+)?|\+[^\s+]\S*)${END}`) },
-  { kind: 'git-discard-checkout', title: 'git checkout -- . (discards working changes)', preview: 'status-worktree',
+  { kind: 'git-discard-checkout', title: 'git checkout -- .（丟掉工作中的修改）', preview: 'status-worktree',
     regex: re(String.raw`${GIT}checkout${ARGS}\s+(?:--\s+)?(?:\.|:/)${END}`) },
-  { kind: 'git-discard-restore', title: 'git restore . (discards working changes)', preview: 'status-worktree',
+  { kind: 'git-discard-restore', title: 'git restore .（丟掉工作中的修改）', preview: 'status-worktree',
     regex: re(String.raw`${GIT}restore${ARGS}\s+(?:--\s+)?(?:\.|:/)${END}`),
     // `--staged` alone only unstages. With `--worktree` it also discards.
     unless: re(String.raw`^(?=.*\s(?:--staged|-S)${END})(?!.*\s(?:--worktree|-W)${END})`) },
-  { kind: 'git-branch-delete', title: 'git branch -D (force-deletes a branch)', preview: 'branch',
+  { kind: 'git-branch-delete', title: 'git branch -D（強制刪除分支）', preview: 'branch',
     regex: re(String.raw`${GIT}branch${ARGS}\s+-[a-zA-Z]*D[a-zA-Z]*${END}`) },
-  { kind: 'git-stash-drop', title: 'git stash drop / clear', preview: 'stash',
+  { kind: 'git-stash-drop', title: 'git stash drop／clear（刪掉暫存起來的修改）', preview: 'stash',
     regex: re(String.raw`${GIT}stash\s+(?:drop|clear)${END}`) },
 ]
 
@@ -141,7 +141,7 @@ export const MAX_PATHS = 8 // plain paths looked at for one rm
 export const MAX_RISKS_PREVIEWED = 3
 export const STEP_TIMEOUT_MS = 3000 // for each `git` call
 export const OUTPUT_CAP = 200_000 // characters of git output read
-export const NO_PREVIEW = 'no preview available'
+export const NO_PREVIEW = '無法預覽'
 
 // The `git` the previews run. Read only, argv (no shell). The command's own global
 // options (`-C`, `-c`) are NOT passed on: a `-c core.fsmonitor=...` would run code
@@ -184,14 +184,14 @@ export type PushPlan = { range?: string; note?: string }
 // local branch has not: `local..remote`.
 export const pushPlan = (segment: string): PushPlan => {
   const args = gitArgs(segment, 'push')
-  if (!args) return { note: 'the git options of the command are not followed' }
+  if (!args) return { note: '指令裡的 git 選項（例如 -C）沒有納入檢查' }
   const places = args.filter(a => !a.startsWith('-')).map(a => a.replace(/^\+/, ''))
   if (places.length <= 1) return { range: 'HEAD..@{u}' }
   const [remote = '', branch = ''] = places
   if (places.length === 2 && /^[\w.-]+$/.test(remote) && SAFE_NAME.test(branch) && !branch.startsWith('-')) {
     return { range: `${branch}..${remote}/${branch}` }
   }
-  return { note: `the target "${places.join(' ')}" is not a plain remote and branch, so commits are not counted` }
+  return { note: `推送目標「${places.join(' ')}」不是單純的「遠端 分支」寫法，所以沒有計算會消失幾個 commit` }
 }
 
 // Names after `git branch -D`: at most 3, plain names only.
@@ -232,11 +232,11 @@ type Out = GitOut | undefined
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
 const lines = (out: Out) => (out?.ok ? out.text.split(/\r?\n/).filter(Boolean) : undefined)
-const more = (n: number) => (n > 0 ? [`  ...and ${n} more`] : [])
+const more = (n: number) => (n > 0 ? [`  ……還有 ${n} 項沒列出`] : [])
 const countText = (n: number, isCut: boolean) => (isCut ? `${n}+` : String(n))
 const list = (items: readonly string[]) => [...items.slice(0, MAX_SHOWN).map(i => `  ${i}`), ...more(items.length - MAX_SHOWN)]
 
-export const NO_GIT_PREVIEW = `${NO_PREVIEW} (not a git repository, git is missing, or the git read failed)`
+export const NO_GIT_PREVIEW = `${NO_PREVIEW}（這裡不是 git 資料夾、沒有安裝 git，或讀取 git 失敗）`
 
 // `git status --porcelain` lines are `XY path`: X the index, Y the work tree.
 // `scope` 'worktree' counts only what `checkout -- .` / `restore .` would discard.
@@ -247,15 +247,15 @@ export const previewStatus = (status: Out, shortstat: Out, scope: 'all' | 'workt
   const tracked = all.filter(l => !l.startsWith('??') && !l.startsWith('!!') && (scope === 'all' || (l[1] ?? ' ') !== ' '))
   const out: string[] = []
   if (tracked.length === 0) {
-    out.push(scope === 'all' ? 'no uncommitted changes to tracked files to lose.' : 'no unstaged changes to tracked files to lose.')
+    out.push(scope === 'all' ? '沒有還沒 commit 的修改會被丟掉。' : '沒有還沒 git add 的修改會被丟掉。')
   } else {
-    out.push(`${countText(tracked.length, status.isCut)} tracked ${tracked.length === 1 ? 'file' : 'files'} with ${scope === 'all' ? 'uncommitted' : 'unstaged'} changes would be overwritten (status, path):`)
+    out.push(`有 ${countText(tracked.length, status.isCut)} 個檔案的修改會被蓋掉（${scope === 'all' ? '還沒 commit' : '還沒 git add'}；下面每行是「狀態 路徑」）：`)
     out.push(...list(tracked))
     const stat = lines(shortstat)?.[0]
     if (stat) out.push(`  ${stat.trim()}`)
   }
-  if (untracked > 0) out.push(`${plural(untracked, 'untracked file')} not touched.`)
-  if (scope === 'all') out.push('A reset to another commit also moves the branch; those commits are not counted here.')
+  if (untracked > 0) out.push(`另有 ${untracked} 個沒被 git 追蹤的檔案不會被動到。`)
+  if (scope === 'all') out.push('如果是 reset 到別的 commit，分支也會跟著移動；那些 commit 沒有算在這裡。')
   return out
 }
 
@@ -263,8 +263,8 @@ export const previewClean = (dryRun: Out): string[] => {
   const all = lines(dryRun)
   if (!all || !dryRun) return [NO_GIT_PREVIEW]
   const paths = all.filter(l => l.startsWith('Would remove ')).map(l => l.slice('Would remove '.length))
-  if (paths.length === 0) return ['git clean -n lists nothing to delete.']
-  return [`${countText(paths.length, dryRun.isCut)} untracked ${paths.length === 1 ? 'path' : 'paths'} would be deleted (git clean -n):`, ...list(paths)]
+  if (paths.length === 0) return ['用 git clean -n 試跑，沒有東西會被刪。']
+  return [`有 ${countText(paths.length, dryRun.isCut)} 個沒被 git 追蹤的路徑會被刪掉（用 git clean -n 試跑的結果）：`, ...list(paths)]
 }
 
 export type PushInfo = { branch: Out; upstream: Out; count: Out; log: Out; plan: PushPlan }
@@ -273,18 +273,18 @@ export const previewPush = ({ branch, upstream, count, log, plan }: PushInfo): s
   const name = lines(branch)?.[0]
   const target = lines(upstream)?.[0]
   const out: string[] = []
-  if (name) out.push(`current branch: ${name}, upstream: ${target ?? 'none set'}`)
+  if (name) out.push(`目前的分支：${name}，對應的遠端分支：${target ?? '沒有設定'}`)
   const n = Number(lines(count)?.[0])
   if (plan.range && Number.isInteger(n)) {
     out.push(
       n === 0
-        ? 'the remote branch has no commits that your branch lacks (per the last fetch).'
-        : `${plural(n, 'commit')} on the remote would be lost (per the last fetch, ${plan.range}):`,
+        ? '遠端分支沒有你本機缺少的 commit（依上一次 fetch 的結果）。'
+        : `遠端有 ${n} 個 commit 會消失（依上一次 fetch 的結果，範圍 ${plan.range}）：`,
     )
     const commits = lines(log) ?? []
     if (n > 0) out.push(...list(commits))
   } else {
-    out.push('remote history may be overwritten; the lost commits could not be counted.')
+    out.push('遠端的歷史可能被覆蓋；算不出會消失幾個 commit。')
   }
   if (plan.note) out.push(plan.note)
   return out.length ? out : [NO_GIT_PREVIEW]
@@ -295,15 +295,15 @@ export const previewBranch = (items: readonly { name: string; count: Out }[]): s
   return items.map(({ name, count }) => {
     const n = Number(lines(count)?.[0])
     return Number.isInteger(n)
-      ? `branch ${name}: ${plural(n, 'commit')} not in the current branch${n > 0 ? ' (only the reflog keeps them after the delete)' : ''}`
-      : `branch ${name}: ${NO_PREVIEW}`
+      ? `分支 ${name}：有 ${n} 個 commit 不在目前的分支裡${n > 0 ? '（刪掉後只剩 reflog 找得回來）' : ''}`
+      : `分支 ${name}：${NO_PREVIEW}`
   })
 }
 
 export const previewStash = (stashes: Out): string[] => {
   const all = lines(stashes)
   if (!all) return [NO_GIT_PREVIEW]
-  return [`${plural(all.length, 'stash', 'stashes')} exist. "drop" removes the one named (default stash@{0}); "clear" removes all.`, ...list(all)]
+  return [`目前有 ${all.length} 筆暫存的修改。drop 會刪掉指定的那一筆（沒指定就是 stash@{0}）；clear 會全部刪掉。`, ...list(all)]
 }
 
 // What the engine found for one path.
@@ -314,37 +314,37 @@ export type PathFact =
 
 export const previewPaths = (facts: readonly PathFact[], args: PathArgs, hasCd: boolean): string[] => {
   const out: string[] = []
-  if (hasCd) out.push('an earlier part of the command changes directory, so relative paths are not resolved:')
+  if (hasCd) out.push('這串指令前面先用 cd 換了資料夾，所以後面寫的相對路徑查不到實際位置，沒辦法預覽。')
   for (const f of facts) {
-    if (f.kind === 'dir') out.push(`${f.path}: directory, ${f.isCapped ? `${ENTRY_CAP}+` : f.entries} ${f.entries === 1 && !f.isCapped ? 'entry' : 'entries'} inside`)
-    else if (f.kind === 'file') out.push(`${f.path}: file`)
-    else if (f.kind === 'link') out.push(`${f.path}: symbolic link (the link is removed, its target is not followed)`)
-    else if (f.kind === 'other') out.push(`${f.path}: exists, not a plain file or directory`)
-    else out.push(`${f.path}: not found`)
+    if (f.kind === 'dir') out.push(`${f.path}：資料夾，裡面有 ${f.isCapped ? `${ENTRY_CAP}+` : f.entries} 個項目`)
+    else if (f.kind === 'file') out.push(`${f.path}：檔案`)
+    else if (f.kind === 'link') out.push(`${f.path}：捷徑（symbolic link；只刪捷徑本身，不會刪它指向的東西）`)
+    else if (f.kind === 'other') out.push(`${f.path}：存在，但不是一般的檔案或資料夾`)
+    else out.push(`${f.path}：找不到`)
   }
-  if (args.paths.length > facts.length) out.push(`...and ${args.paths.length - facts.length} more paths not looked at`)
-  if (args.skipped.length) out.push(`not previewed (glob or variable): ${args.skipped.slice(0, MAX_SHOWN).join(' ')}`)
-  return out.length ? out : [`${NO_PREVIEW} (no plain path in the command)`]
+  if (args.paths.length > facts.length) out.push(`還有 ${args.paths.length - facts.length} 個要刪的路徑沒有檢查（指令裡 rm 後面寫的那些）`)
+  if (args.skipped.length) out.push(`沒有預覽（路徑裡有萬用字元或變數）：${args.skipped.slice(0, MAX_SHOWN).join(' ')}`)
+  return out.length ? out : [`${NO_PREVIEW}（指令裡沒有單純的路徑）`]
 }
 
 // ---- The dialog -------------------------------------------------------------------
 
-export const PROCEED = 'Proceed'
-export const CANCEL = 'Cancel'
-export const DIALOG_HEADER = 'Blast Radius' // 12 characters: the most the chip takes
+export const PROCEED = '執行'
+export const CANCEL = '取消'
+export const DIALOG_HEADER = '危險指令確認' // the chip takes 12 characters at most
 
 const shorten = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}...` : text)
 
 export const buildQuestion = (command: string, risks: readonly Pick<Risk, 'title'>[], preview: readonly string[]): string =>
   [
-    `Blast Radius holds this command: ${risks.length ? risks.map(r => r.title).join('; ') : 'it could not be checked'}.`,
+    `這個指令先被擋下來，等你確認（Blast Radius 安全檢查）。原因：${risks.length ? risks.map(r => r.title).join('；') : '檢查不出這個指令會做什麼'}。`,
     '',
     `  ${shorten(command, 400)}`,
     '',
-    'What would change (a best-effort, read-only check):',
+    '執行後會改變什麼（只讀取、沒有動任何東西；能查多少算多少）：',
     ...preview.map(l => `  ${l}`),
     '',
-    'Run it now?',
+    '要現在執行嗎？選「執行」才會跑，其他選項都當成取消。',
   ].join('\n')
 
 // Only the exact label Proceed lets the command run. Free text typed under "Other",

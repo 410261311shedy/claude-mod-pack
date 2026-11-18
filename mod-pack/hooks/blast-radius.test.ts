@@ -1,8 +1,8 @@
 import { test, expect } from 'claude-code/testing'
 
 import {
-  blastRadius, branchTargets, buildQuestion, cleanDryRun, classify, denyReason, ENTRY_CAP, hasGitOptions, isProceed, MAX_SHOWN, NO_GIT_PREVIEW, NO_PREVIEW,
-  pathArgs, previewBranch, previewClean, previewPaths, previewPush, previewStash, previewStatus, pushPlan, resolvePath,
+  blastRadius, branchTargets, buildQuestion, CANCEL, cleanDryRun, classify, denyReason, ENTRY_CAP, hasGitOptions, isProceed, MAX_SHOWN, NO_GIT_PREVIEW, NO_PREVIEW,
+  pathArgs, previewBranch, previewClean, previewPaths, previewPush, previewStash, previewStatus, PROCEED, pushPlan, resolvePath,
 } from './blast-radius'
 import type { GitOut } from './blast-radius'
 
@@ -194,7 +194,7 @@ test('pushPlan: which commits would the remote lose', () => {
   expect(pushPlan('git push -f origin')).toEqual({ range: 'HEAD..@{u}' })
   expect(pushPlan('git push -f origin main')).toEqual({ range: 'main..origin/main' })
   expect(pushPlan('git push origin +main')).toEqual({ range: 'main..origin/main' })
-  expect(pushPlan('git push -f origin HEAD:main').note).toContain('not a plain remote and branch')
+  expect(pushPlan('git push -f origin HEAD:main').note).toContain('不是單純的「遠端 分支」寫法')
   expect(pushPlan('git push -f origin a b').range).toBeUndefined()
 })
 
@@ -215,42 +215,42 @@ const FAILED: GitOut = { ok: false, text: '', isCut: false }
 test('status preview: tracked count, first paths, untracked left alone', () => {
   const text = [' M a.ts', 'M  b.ts', 'A  c.ts', '?? new1.txt', '?? new2.txt'].join('\n')
   const lines = previewStatus(out(text), out(' 3 files changed, 10 insertions(+), 2 deletions(-)\n'), 'all')
-  expect(lines[0]).toBe('3 tracked files with uncommitted changes would be overwritten (status, path):')
+  expect(lines[0]).toBe('有 3 個檔案的修改會被蓋掉（還沒 commit；下面每行是「狀態 路徑」）：')
   expect(lines.slice(1, 4)).toEqual(['   M a.ts', '  M  b.ts', '  A  c.ts'])
   expect(lines).toContain('  3 files changed, 10 insertions(+), 2 deletions(-)')
-  expect(lines).toContain('2 untracked files not touched.')
+  expect(lines).toContain('另有 2 個沒被 git 追蹤的檔案不會被動到。')
 })
 
 test('status preview: the work-tree scope counts only unstaged changes', () => {
   const text = [' M a.ts', 'M  b.ts', 'MM c.ts'].join('\n')
   const lines = previewStatus(out(text), undefined, 'worktree')
-  expect(lines[0]).toBe('2 tracked files with unstaged changes would be overwritten (status, path):')
+  expect(lines[0]).toBe('有 2 個檔案的修改會被蓋掉（還沒 git add；下面每行是「狀態 路徑」）：')
   expect(lines.join('\n')).not.toContain('b.ts')
 })
 
 test('status preview: truncation to 10 paths with "and N more", and an exact count line', () => {
   const text = Array.from({ length: 14 }, (_, i) => ` M file${i}.ts`).join('\n')
   const lines = previewStatus(out(text), undefined, 'all')
-  expect(lines[0]).toContain('14 tracked files')
+  expect(lines[0]).toContain('有 14 個檔案')
   expect(lines.filter(l => l.includes('file') && l.includes('.ts'))).toHaveLength(MAX_SHOWN)
-  expect(lines).toContain('  ...and 4 more')
+  expect(lines).toContain('  ……還有 4 項沒列出')
 })
 
 test('status preview: clean tree, cut output, and no preview', () => {
-  expect(previewStatus(out(''), undefined, 'all')[0]).toBe('no uncommitted changes to tracked files to lose.')
-  expect(previewStatus(out(' M a.ts\n', { isCut: true }), undefined, 'all')[0]).toContain('1+ tracked file')
+  expect(previewStatus(out(''), undefined, 'all')[0]).toBe('沒有還沒 commit 的修改會被丟掉。')
+  expect(previewStatus(out(' M a.ts\n', { isCut: true }), undefined, 'all')[0]).toContain('有 1+ 個檔案')
   expect(previewStatus(FAILED, undefined, 'all')).toEqual([NO_GIT_PREVIEW])
   expect(previewStatus(undefined, undefined, 'worktree')).toEqual([NO_GIT_PREVIEW])
-  expect(NO_GIT_PREVIEW).toContain('no preview available')
+  expect(NO_GIT_PREVIEW).toContain('無法預覽')
 })
 
 test('clean preview: count, 10 paths, and "and N more"', () => {
   const text = Array.from({ length: 12 }, (_, i) => `Would remove tmp/f${i}.log`).join('\n') + '\nWould skip repository sub/\n'
   const lines = previewClean(out(text))
-  expect(lines[0]).toBe('12 untracked paths would be deleted (git clean -n):')
+  expect(lines[0]).toBe('有 12 個沒被 git 追蹤的路徑會被刪掉（用 git clean -n 試跑的結果）：')
   expect(lines).toHaveLength(1 + MAX_SHOWN + 1)
-  expect(lines.at(-1)).toBe('  ...and 2 more')
-  expect(previewClean(out(''))).toEqual(['git clean -n lists nothing to delete.'])
+  expect(lines.at(-1)).toBe('  ……還有 2 項沒列出')
+  expect(previewClean(out(''))).toEqual(['用 git clean -n 試跑，沒有東西會被刪。'])
   expect(previewClean(undefined)).toEqual([NO_GIT_PREVIEW])
 })
 
@@ -262,24 +262,24 @@ test('push preview: branch, upstream, lost commits; and the fallback text', () =
     log: out('abc1234 fix\ndef5678 add\n'),
     plan: { range: 'HEAD..@{u}' },
   })
-  expect(lines[0]).toBe('current branch: main, upstream: origin/main')
-  expect(lines[1]).toBe('2 commits on the remote would be lost (per the last fetch, HEAD..@{u}):')
+  expect(lines[0]).toBe('目前的分支：main，對應的遠端分支：origin/main')
+  expect(lines[1]).toBe('遠端有 2 個 commit 會消失（依上一次 fetch 的結果，範圍 HEAD..@{u}）：')
   expect(lines.slice(2)).toEqual(['  abc1234 fix', '  def5678 add'])
 
   const none = previewPush({ branch: out('main'), upstream: FAILED, count: undefined, log: undefined, plan: { note: 'the target "x" is odd' } })
-  expect(none).toEqual(['current branch: main, upstream: none set', 'remote history may be overwritten; the lost commits could not be counted.', 'the target "x" is odd'])
-  expect(previewPush({ branch: undefined, upstream: undefined, count: undefined, log: undefined, plan: {} })).toEqual(['remote history may be overwritten; the lost commits could not be counted.'])
-  expect(previewPush({ branch: out('m'), upstream: out('o/m'), count: out('0'), log: out(''), plan: { range: 'HEAD..@{u}' } })[1]).toContain('no commits that your branch lacks')
+  expect(none).toEqual(['目前的分支：main，對應的遠端分支：沒有設定', '遠端的歷史可能被覆蓋；算不出會消失幾個 commit。', 'the target "x" is odd'])
+  expect(previewPush({ branch: undefined, upstream: undefined, count: undefined, log: undefined, plan: {} })).toEqual(['遠端的歷史可能被覆蓋；算不出會消失幾個 commit。'])
+  expect(previewPush({ branch: out('m'), upstream: out('o/m'), count: out('0'), log: out(''), plan: { range: 'HEAD..@{u}' } })[1]).toContain('沒有你本機缺少的 commit')
 })
 
 test('branch and stash previews', () => {
   expect(previewBranch([{ name: 'a', count: out('3\n') }, { name: 'b', count: out('0') }, { name: 'c', count: FAILED }])).toEqual([
-    'branch a: 3 commits not in the current branch (only the reflog keeps them after the delete)',
-    'branch b: 0 commits not in the current branch',
-    `branch c: ${NO_PREVIEW}`,
+    '分支 a：有 3 個 commit 不在目前的分支裡（刪掉後只剩 reflog 找得回來）',
+    '分支 b：有 0 個 commit 不在目前的分支裡',
+    `分支 c：${NO_PREVIEW}`,
   ])
   expect(previewBranch([])).toEqual([NO_PREVIEW])
-  expect(previewStash(out('stash@{0}: WIP on main: abc fix\nstash@{1}: WIP on main: def add\n'))[0]).toContain('2 stashes exist')
+  expect(previewStash(out('stash@{0}: WIP on main: abc fix\nstash@{1}: WIP on main: def add\n'))[0]).toContain('目前有 2 筆暫存的修改')
   expect(previewStash(undefined)).toEqual([NO_GIT_PREVIEW])
 })
 
@@ -297,40 +297,40 @@ test('path preview: each state, the cd note, skipped paths and the cap', () => {
     false,
   )
   expect(lines).toEqual([
-    'build: directory, 412 entries inside',
-    'big: directory, 1000+ entries inside',
-    'one: directory, 1 entry inside',
-    'a.txt: file',
-    'lnk: symbolic link (the link is removed, its target is not followed)',
-    'gone: not found',
-    '...and 2 more paths not looked at',
-    'not previewed (glob or variable): *.log',
+    'build：資料夾，裡面有 412 個項目',
+    'big：資料夾，裡面有 1000+ 個項目',
+    'one：資料夾，裡面有 1 個項目',
+    'a.txt：檔案',
+    'lnk：捷徑（symbolic link；只刪捷徑本身，不會刪它指向的東西）',
+    'gone：找不到',
+    '還有 2 個要刪的路徑沒有檢查（指令裡 rm 後面寫的那些）',
+    '沒有預覽（路徑裡有萬用字元或變數）：*.log',
   ])
-  expect(previewPaths([], { paths: ['x'], skipped: [] }, true)[0]).toContain('changes directory')
-  expect(previewPaths([], { paths: [], skipped: [] }, false)).toEqual([`${NO_PREVIEW} (no plain path in the command)`])
+  expect(previewPaths([], { paths: ['x'], skipped: [] }, true)[0]).toContain('換了資料夾')
+  expect(previewPaths([], { paths: [], skipped: [] }, false)).toEqual([`${NO_PREVIEW}（指令裡沒有單純的路徑）`])
 })
 
 test('the dialog text names the kinds and the exact command, then the preview', () => {
   const text = buildQuestion('rm -rf build', [{ title: 'recursive delete (rm -r)' }], ['build: directory, 3 entries inside'])
   expect(text).toBe(
     [
-      'Blast Radius holds this command: recursive delete (rm -r).',
+      '這個指令先被擋下來，等你確認（Blast Radius 安全檢查）。原因：recursive delete (rm -r)。',
       '',
       '  rm -rf build',
       '',
-      'What would change (a best-effort, read-only check):',
+      '執行後會改變什麼（只讀取、沒有動任何東西；能查多少算多少）：',
       '  build: directory, 3 entries inside',
       '',
-      'Run it now?',
+      '要現在執行嗎？選「執行」才會跑，其他選項都當成取消。',
     ].join('\n'),
   )
-  expect(buildQuestion('x'.repeat(500), [], [])).toContain('it could not be checked')
+  expect(buildQuestion('x'.repeat(500), [], [])).toContain('檢查不出這個指令會做什麼')
   expect(buildQuestion('x'.repeat(500), [], [])).toContain(`${'x'.repeat(400)}...`)
 })
 
 test('only the exact label Proceed lets a command run', () => {
-  expect(isProceed('Proceed')).toBe(true)
-  for (const other of ['Cancel', 'proceed', 'Proceed ', '', 'yes', 'Proceed, Cancel', undefined]) expect(isProceed(other)).toBe(false)
+  expect(isProceed(PROCEED)).toBe(true)
+  for (const other of [CANCEL, 'proceed', 'Proceed', `${PROCEED} `, '', 'yes', `${PROCEED}, ${CANCEL}`, undefined]) expect(isProceed(other)).toBe(false)
 })
 
 test('the denial tells Claude the command did not run and not to retry it unprompted', () => {

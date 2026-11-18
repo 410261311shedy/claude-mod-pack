@@ -35,7 +35,7 @@ const world = (on: any, init: Partial<Config> = {}) => {
   const w = {
     clock,
     cfg: {
-      reply: { say: 'Proceed' },
+      reply: { say: '執行' },
       status: ' M src/app.ts\n',
       diff: 'diff --git a/src/app.ts b/src/app.ts\n+one\n',
       statusCode: 0,
@@ -250,7 +250,7 @@ test('commands that are not a commit, a push or a test: no git, no state, straig
 })
 
 test('/mods off ship-gate: the commit and the push pass; /mods on holds them again', async ($, on) => {
-  const w = world(on, { reply: say('Cancel') })
+  const w = world(on, { reply: say('取消') })
   expect(((await $.command.run(slash('off ship-gate'))) as any).text).toBe('mod-pack: ship-gate is OFF.')
   expect(((await $.tool.call(bash('git commit -am "x"'))) as any).deny).toBeUndefined()
   await $.tool.call(bash('git push'))
@@ -263,7 +263,7 @@ test('/mods off ship-gate: the commit and the push pass; /mods on holds them aga
 })
 
 test('the shipGate setting off: nothing is held. A /mods on choice beats the setting.', { options: { shipGate: false } }, async ($, on) => {
-  const w = world(on, { reply: say('Cancel') })
+  const w = world(on, { reply: say('取消') })
   expect(((await $.tool.call(bash('git commit -am "x"'))) as any).deny).toBeUndefined()
   await $.tool.call(bash('git push'))
   expect(w.questions).toEqual([])
@@ -294,20 +294,20 @@ test('git push: the dialog shows the remote with the credential hidden, visibili
   const result: any = await $.tool.call(bash('git push'))
   expect(w.questions).toHaveLength(1)
   const [asked] = w.questions
-  expect(asked?.header).toBe('Ship Gate')
-  expect(asked?.labels).toEqual(['Proceed', 'Cancel'])
-  expect(asked?.question).toContain('Ship Gate holds this command: git push (publishes commits).')
-  expect(asked?.question).toContain('remote origin: https://***@github.com/me/repo.git (public)')
+  expect(asked?.header).toBe('推送前確認')
+  expect(asked?.labels).toEqual(['執行', '取消'])
+  expect(asked?.question).toContain('這個指令先被擋下來，等你確認（Ship Gate 推送前檢查）。原因：git push（把 commit 推到遠端）。')
+  expect(asked?.question).toContain('推送到遠端 origin：https://***@github.com/me/repo.git（公開 repo）')
   expect(asked?.question).not.toContain('ghp_secret')
-  expect(asked?.question).toContain('2 unpushed commits.')
-  expect(asked?.question).toContain('every author and committer address is a noreply address.')
-  expect(asked?.question.endsWith('Run it now?')).toBe(true)
+  expect(asked?.question).toContain('有 2 個 commit 還沒推上去。')
+  expect(asked?.question).toContain('每個 commit 的作者和提交者信箱都是 noreply 信箱。')
+  expect(asked?.question.endsWith('要現在執行嗎？選「執行」才會跑，其他選項都當成取消。')).toBe(true)
   expect(result.deny).toBeUndefined()
   expect(w.reached).toEqual(['git push'])
 })
 
 test('git push + Cancel: denied, never reached; dismissed and no one to ask: denied too', async ($, on) => {
-  const w = world(on, { reply: say('Cancel') })
+  const w = world(on, { reply: say('取消') })
   expect(((await $.tool.call(bash('git push'))) as any).deny).toContain('the person cancelled this command (push)')
   w.cfg.reply = 'dismiss'
   expect(((await $.tool.call(bash('git push'))) as any).deny).toContain('no confirmation was given')
@@ -320,7 +320,7 @@ test('git push + Cancel: denied, never reached; dismissed and no one to ask: den
 })
 
 test('git push --dry-run and git push -n are not held', async ($, on) => {
-  const w = world(on, { reply: say('Cancel') })
+  const w = world(on, { reply: say('取消') })
   await $.tool.call(bash('git push --dry-run'))
   await $.tool.call(bash('git push -n origin main'))
   expect(w.questions).toEqual([])
@@ -335,9 +335,9 @@ test('an author e-mail that is not a noreply address is shown, and so is the e-m
   })
   await $.tool.call(bash('git push'))
   const text = w.questions[0]?.question ?? ''
-  expect(text).toContain('author or committer addresses that are not noreply addresses: me@home.net')
-  expect(text).toContain('1 commit with a personal string in an address or subject.')
-  expect(text).toContain('personal strings (me@home.net): 1 line in the text files at HEAD:')
+  expect(text).toContain('commit 的作者或提交者信箱不是 noreply 信箱（推上去會看得到）：me@home.net')
+  expect(text).toContain('有 1 個 commit 的信箱或標題裡出現個人資訊的字串。')
+  expect(text).toContain('個人資訊字串（me@home.net）：最新 commit 的文字檔裡有 1 行：')
   expect(text).toContain('docs/a.md:7: contact me@home.net')
   const grep = gitRuns(w).find(a => a[0] === 'grep')
   expect(grep).toEqual(['grep', '-n', '-I', '-i', '-F', '-e', 'me@home.net', 'HEAD'])
@@ -347,10 +347,10 @@ test('the user name in the folder path is searched; hits are listed as path:line
   const w = world(on, { grep: 'HEAD:README.md:3:path C:\\Users\\alice\\x\nHEAD:docs/b.md:9:alice wrote this\n' })
   await $.tool.call(bash('cd /home/alice/repo && git push'))
   const text = w.questions[0]?.question ?? ''
-  expect(text).toContain('personal strings (alice): 2 lines in the text files at HEAD:')
+  expect(text).toContain('個人資訊字串（alice）：最新 commit 的文字檔裡有 2 行：')
   expect(text).toContain('README.md:3: path C:\\Users\\alice\\x')
   expect(text).toContain('docs/b.md:9: alice wrote this')
-  expect(text).toContain('binary files (images) are not searched.')
+  expect(text).toContain('圖片等二進位檔沒有搜尋。')
 })
 
 test('the shipGateTerms setting adds strings to the search', { options: { shipGateTerms: 'Jane Doe, acme-corp' } }, async ($, on) => {
@@ -359,20 +359,20 @@ test('the shipGateTerms setting adds strings to the search', { options: { shipGa
   const grep = gitRuns(w).find(a => a[0] === 'grep') ?? []
   expect(grep).toContain('Jane Doe')
   expect(grep).toContain('acme-corp')
-  expect(w.questions[0]?.question).toContain('personal strings (Jane Doe, acme-corp): no hit in the text files at HEAD.')
+  expect(w.questions[0]?.question).toContain('個人資訊字串（Jane Doe, acme-corp）：最新 commit 的文字檔裡沒有找到。')
 })
 
 test('a push with nothing to search for says so and runs no grep', async ($, on) => {
   const w = world(on)
   await $.tool.call(bash('git push'))
-  expect(w.questions[0]?.question).toContain('none to search for')
+  expect(w.questions[0]?.question).toContain('沒有可以搜尋的字')
   expect(gitRuns(w).some(a => a[0] === 'grep')).toBe(false)
 })
 
 test('a push to a named remote lists the commits that the remote branches lack, and names its url', async ($, on) => {
   const w = world(on, { url: 'git@github.com:me/other.git' })
   await $.tool.call(bash('git push backup main'))
-  expect(w.questions[0]?.question).toContain('remote backup: git@github.com:me/other.git (public)')
+  expect(w.questions[0]?.question).toContain('推送到遠端 backup：git@github.com:me/other.git（公開 repo）')
   const log = gitRuns(w).find(a => a[0] === 'log') ?? []
   expect(log).toEqual(['log', '-n', '200', '--format=%h%x09%ae%x09%ce%x09%s', 'HEAD', '--not', '--remotes=backup'])
   const view = w.runs.find(r => r.argv[0] === 'gh')
@@ -382,7 +382,7 @@ test('a push to a named remote lists the commits that the remote branches lack, 
 test('no upstream and no remote named: the remote is origin, and the range is everything the remote lacks', async ($, on) => {
   const w = world(on, { upstream: '' })
   await $.tool.call(bash('git push'))
-  expect(w.questions[0]?.question).toContain('remote origin:')
+  expect(w.questions[0]?.question).toContain('推送到遠端 origin：')
   const log = gitRuns(w).find(a => a[0] === 'log') ?? []
   expect(log.slice(-3)).toEqual(['HEAD', '--not', '--remotes=origin'])
 })
@@ -391,8 +391,8 @@ test('gh and git cannot be read: the dialog still shows, saying what is missing'
   const w = world(on, { runThrows: true })
   await $.tool.call(bash('git push'))
   expect(w.questions).toHaveLength(1)
-  expect(w.questions[0]?.question).toContain('url not readable (visibility not readable)')
-  expect(w.questions[0]?.question).toContain('unpushed commits: could not be listed.')
+  expect(w.questions[0]?.question).toContain('讀不到網址（讀不到這個 repo 是公開還是私有）')
+  expect(w.questions[0]?.question).toContain('還沒推上去的 commit：列不出來。')
   expect(w.reached).toEqual(['git push'])
 })
 
@@ -400,9 +400,9 @@ test('gh repo create --public --source=. --push: one dialog with the flag, the t
   const w = world(on, { grep: 'HEAD:a.md:1:alice\n' })
   await $.tool.call(bash('cd /home/alice/p && gh repo create me/p --public --source=. --push'))
   const text = w.questions[0]?.question ?? ''
-  expect(text).toContain('gh repo create (creates a repository)')
-  expect(text).toContain('creates a repository: --public; pushes the local folder')
-  expect(text).toContain('personal strings (alice): 1 line in the text files at HEAD:')
+  expect(text).toContain('gh repo create（建立新的 repo）')
+  expect(text).toContain('會建立一個新的 repo：--public；並把本機資料夾推上去')
+  expect(text).toContain('個人資訊字串（alice）：最新 commit 的文字檔裡有 1 行：')
   expect(w.reached).toHaveLength(1)
 })
 
@@ -417,30 +417,30 @@ test('gh api pages with a change is held; a read of the build status is not', as
   const w = world(on)
   await $.tool.call(bash('gh api -X POST repos/me/repo/pages -f "source[branch]=main"'))
   expect(w.questions).toHaveLength(1)
-  expect(w.questions[0]?.question).toContain('changes GitHub Pages')
+  expect(w.questions[0]?.question).toContain('會更改 GitHub Pages')
   await $.tool.call(bash('gh api repos/me/repo/pages/builds/latest --jq .status'))
   expect(w.questions).toHaveLength(1)
   expect(w.reached).toHaveLength(2)
 })
 
 test('gh repo edit --visibility public is held', async ($, on) => {
-  const w = world(on, { reply: say('Cancel') })
+  const w = world(on, { reply: say('取消') })
   const denied: any = await $.tool.call(bash('gh repo edit me/repo --visibility public --accept-visibility-change-consequences'))
   expect(denied.deny).toContain('(visibility)')
-  expect(w.questions[0]?.question).toContain('makes the repository public (now public)')
+  expect(w.questions[0]?.question).toContain('會把 repo 改成公開（現在是公開）')
 })
 
 test('two publish parts in one command: one dialog, both named', async ($, on) => {
   const w = world(on)
   await $.tool.call(bash('git push && gh api -X POST repos/me/repo/pages -f a=b'))
   expect(w.questions).toHaveLength(1)
-  expect(w.questions[0]?.question).toContain('git push (publishes commits); gh api pages (changes GitHub Pages)')
+  expect(w.questions[0]?.question).toContain('git push（把 commit 推到遠端）；gh api pages（更改 GitHub Pages）')
 })
 
 test('an unknown folder: the dialog still asks, and says nothing was looked at', async ($, on) => {
   const w = world(on)
   await $.tool.call(bash('cd "$REPO" && git push'))
-  expect(w.questions[0]?.question).toContain('could not be resolved')
+  expect(w.questions[0]?.question).toContain('查不出這個指令是在哪個資料夾執行')
   expect(gitRuns(w)).toEqual([])
 })
 
@@ -457,14 +457,14 @@ test('the publish checks run only read-only git: config, rev-parse, remote get-u
 test('git push --force: Blast Radius asks first, then Ship Gate; Cancel at the first stops the second', async ($, on) => {
   const w = world(on)
   await $.tool.call(bash('git push --force origin main'))
-  expect(w.questions.map(q => q.header)).toEqual(['Blast Radius', 'Ship Gate'])
+  expect(w.questions.map(q => q.header)).toEqual(['危險指令確認', '推送前確認'])
   expect(w.reached).toEqual(['git push --force origin main'])
 
   w.questions.length = 0
   w.reached.length = 0
-  w.cfg.reply = say('Cancel')
+  w.cfg.reply = say('取消')
   const denied: any = await $.tool.call(bash('git push --force origin main'))
-  expect(w.questions.map(q => q.header)).toEqual(['Blast Radius'])
+  expect(w.questions.map(q => q.header)).toEqual(['危險指令確認'])
   expect(denied.deny).toContain('Blast Radius')
   expect(w.reached).toEqual([])
 })

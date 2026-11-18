@@ -248,53 +248,53 @@ test('describePublish for a push: remote, visibility, commits, addresses, hits',
     grepRan: true,
   })
   expect(lines).toEqual([
-    'remote origin: https://***@github.com/o/r.git (public)',
-    '2 unpushed commits.',
-    'author or committer addresses that are not noreply addresses: me@home.net',
-    'personal strings (alice): 1 line in the text files at HEAD:',
+    '推送到遠端 origin：https://***@github.com/o/r.git（公開 repo）',
+    '有 2 個 commit 還沒推上去。',
+    'commit 的作者或提交者信箱不是 noreply 信箱（推上去會看得到）：me@home.net',
+    '個人資訊字串（alice）：最新 commit 的文字檔裡有 1 行：',
     '  README.md:4: see C:\\Users\\alice\\x',
-    'binary files (images) are not searched.',
+    '圖片等二進位檔沒有搜尋。',
   ])
 })
 
 test('describePublish for a clean push says so, with no hit lines', () => {
   const lines = describePublish({ ...base, remote: 'origin', url: 'u', visibility: 'private', terms: ['alice'], log: 'a1\t1+m@users.noreply.github.com\t1+m@users.noreply.github.com\tx', hits: '', grepRan: true })
-  expect(lines).toContain('remote origin: u (private)')
-  expect(lines).toContain('1 unpushed commit.')
-  expect(lines).toContain('every author and committer address is a noreply address.')
-  expect(lines).toContain('personal strings (alice): no hit in the text files at HEAD.')
+  expect(lines).toContain('推送到遠端 origin：u（私有 repo）')
+  expect(lines).toContain('有 1 個 commit 還沒推上去。')
+  expect(lines).toContain('每個 commit 的作者和提交者信箱都是 noreply 信箱。')
+  expect(lines).toContain('個人資訊字串（alice）：最新 commit 的文字檔裡沒有找到。')
 })
 
 test('describePublish names what it could not read', () => {
   const lines = describePublish({ ...base, remote: 'origin', terms: ['alice'] })
-  expect(lines).toContain('remote origin: url not readable (visibility not readable)')
-  expect(lines).toContain('unpushed commits: could not be listed.')
-  expect(lines.join('\n')).toContain('not looked at (git grep failed, or nothing is committed yet)')
+  expect(lines).toContain('推送到遠端 origin：讀不到網址（讀不到這個 repo 是公開還是私有）')
+  expect(lines).toContain('還沒推上去的 commit：列不出來。')
+  expect(lines.join('\n')).toContain('沒有檢查（git grep 失敗，或還沒有任何 commit）')
 })
 
 test('describePublish with no terms says there was nothing to search for', () => {
-  expect(describePublish({ ...base, remote: 'origin', log: '' }).join('\n')).toContain('none to search for')
+  expect(describePublish({ ...base, remote: 'origin', log: '' }).join('\n')).toContain('沒有可以搜尋的字')
 })
 
 test('describePublish for an unknown folder says nothing was looked at', () => {
-  expect(describePublish({ ...base, isFolderKnown: false })).toEqual(['the folder of the command could not be resolved (a variable or ~ in a cd or git -C), so nothing was looked at.'])
+  expect(describePublish({ ...base, isFolderKnown: false })).toEqual(['查不出這個指令是在哪個資料夾執行（cd 或 git -C 後面用了變數或 ~），所以什麼都沒有檢查。'])
 })
 
 test('describePublish for create, pages and visibility', () => {
-  expect(describePublish({ ...base, kind: 'create', flag: '--public', hasSource: true, terms: ['alice'], hits: '', grepRan: true }).join('\n')).toContain('creates a repository: --public; pushes the local folder')
-  expect(describePublish({ ...base, kind: 'create' })[0]).toContain('no visibility flag')
-  expect(describePublish({ ...base, kind: 'pages', visibility: 'PUBLIC' })[0]).toBe('changes GitHub Pages: serves the repository files as a web page (repository is public)')
-  expect(describePublish({ ...base, kind: 'visibility', visibility: 'PRIVATE' })[0]).toBe('makes the repository public (now private)')
+  expect(describePublish({ ...base, kind: 'create', flag: '--public', hasSource: true, terms: ['alice'], hits: '', grepRan: true }).join('\n')).toContain('會建立一個新的 repo：--public；並把本機資料夾推上去')
+  expect(describePublish({ ...base, kind: 'create' })[0]).toContain('指令沒寫公開或私有')
+  expect(describePublish({ ...base, kind: 'pages', visibility: 'PUBLIC' })[0]).toBe('會更改 GitHub Pages：把 repo 裡的檔案當成網頁公開（這個 repo 是公開）')
+  expect(describePublish({ ...base, kind: 'visibility', visibility: 'PRIVATE' })[0]).toBe('會把 repo 改成公開（現在是私有）')
   // create without a source does not search the tree
-  expect(describePublish({ ...base, kind: 'create', flag: '--private', terms: ['alice'] }).join('\n')).not.toContain('personal strings')
+  expect(describePublish({ ...base, kind: 'create', flag: '--private', terms: ['alice'] }).join('\n')).not.toContain('個人資訊字串')
 })
 
 test('the dialog text: header words, the command, the facts, the question', () => {
   const text = buildPublishQuestion('git push', ['push'], ['remote origin: u'])
-  expect(text).toContain('Ship Gate holds this command: git push (publishes commits).')
+  expect(text).toContain('這個指令先被擋下來，等你確認（Ship Gate 推送前檢查）。原因：git push（把 commit 推到遠端）。')
   expect(text).toContain('  git push')
   expect(text).toContain('  remote origin: u')
-  expect(text.endsWith('Run it now?')).toBe(true)
+  expect(text.endsWith('要現在執行嗎？選「執行」才會跑，其他選項都當成取消。')).toBe(true)
   expect(buildPublishQuestion('x'.repeat(500), ['push'], [])).toContain(`${'x'.repeat(400)}...`)
   for (const kind of ['push', 'create', 'pages', 'visibility'] as const) expect(publishTitle(kind).length).toBeGreaterThan(0)
 })
