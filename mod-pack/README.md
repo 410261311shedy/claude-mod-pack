@@ -342,7 +342,7 @@ Switch it off: `/mods off blast-radius` (at once, no reload), or set `blastRadiu
 Limits:
 
 - It is a safety net, not a permission system. It sees the text of the command. It does not catch an alias, a script that calls `rm`, a command built from variables (`$RM -rf x`, `eval "$cmd"`), other quoting tricks, or destructive commands outside the table (`find -delete`, `dd`, `mkfs`, a `>` redirect over a file, `git checkout -f`).
-- Text that only mentions a command is not held (`echo "rm -rf x"`, `grep rm -rf README`). Text in quotes that holds a separator can be a false positive (`echo "a; rm -rf x"`). That is accepted.
+- Text that only mentions a command is not held (`echo "rm -rf x"`, `grep rm -rf README`). Quotes are read: a risky command inside a quoted argument is text (`echo "a; rm -rf x"`, a commit message that names `git push --force`), but `$(...)` and backticks inside double quotes, and the command line given to `sh -c`, `bash -c`, `eval`, `cmd /c` or `powershell -Command`, are checked. When the quotes of a command do not add up, every separator splits, quoted or not, so it holds too much rather than too little.
 - It is wired to the Bash and PowerShell tool calls only. It does not look at other tools (Edit, Write, MCP tools). Whether the person's own `!` shell commands pass through `tool.call` was not checked.
 - The dialog comes before Claude Code's own permission prompt for the same command. In a mode that skips permission prompts, Blast Radius still asks.
 - Global git options in the command give "no preview available" for the git kinds.

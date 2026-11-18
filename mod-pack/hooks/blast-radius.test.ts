@@ -138,8 +138,44 @@ test('the tables are big enough: 25 or more cases each way', () => {
   expect(NOT_HELD.length).toBeGreaterThanOrEqual(25)
 })
 
-test('a risky word inside quotes after a separator is a false positive (accepted)', () => {
-  expect(kinds('echo "a; rm -rf x"')).toEqual(['rm-recursive'])
+test('quotes are read: a risky word in a quoted argument is text, not a command', () => {
+  expect(kinds('echo "a; rm -rf x"')).toEqual([])
+  expect(kinds("echo 'a && git reset --hard'")).toEqual([])
+  expect(kinds('git commit -m "fix: rm -rf leftovers; git push --force is not used"')).toEqual([])
+  // the report: a grep pattern that holds `|` and `rm -rf:`
+  expect(kinds('cd /x/hooks && grep -n -E "an earlier cd|rm -rf: each plain path|resolvePath" *.test.ts | head; sed -n 1,9p a.ts')).toEqual([])
+  expect(kinds('echo "say \\"hi; rm -rf x\\""')).toEqual([])
+})
+
+test('quotes are read: what the shell still runs is still held', () => {
+  // outside the quotes
+  expect(kinds('echo "a" ; rm -rf x')).toEqual(['rm-recursive'])
+  // $( ) and backticks run inside double quotes, not inside single quotes
+  expect(kinds('echo "$(rm -rf x)"')).toEqual(['rm-recursive'])
+  expect(kinds('echo "now `rm -rf x`"')).toEqual(['rm-recursive'])
+  expect(kinds('echo \'$(rm -rf x)\'')).toEqual([])
+  expect(kinds('X=$(git stash drop) && echo ok')).toEqual(['git-stash-drop'])
+  // the command line inside a shell wrapper is split again
+  expect(kinds('bash -c "ls; rm -rf x"')).toEqual(['rm-recursive'])
+  expect(kinds("sudo sh -c 'cd /srv && git reset --hard'")).toEqual(['git-reset-hard'])
+  expect(kinds('bash -lc "npm ci && rm -rf dist"')).toEqual(['rm-recursive'])
+  expect(kinds('eval "git clean -fd"')).toEqual(['git-clean'])
+  expect(kinds('cmd /c "cd out && rmdir /s /q build"')).toEqual(['rmdir-windows'])
+  expect(kinds('powershell -NoProfile -Command "Get-Date; Remove-Item -Recurse build"')).toEqual(['remove-item'])
+  expect(kinds('bash -c "bash -c \\"rm -rf x\\""')).toEqual(['rm-recursive'])
+  expect(kinds('find . -name x | xargs sh -c "rm -rf $0"')).toEqual(['rm-recursive'])
+})
+
+test('quotes that do not add up: every separator splits, so nothing is missed', () => {
+  expect(kinds('echo don\'t; rm -rf x')).toEqual(['rm-recursive'])
+  expect(kinds('echo "open; rm -rf x')).toEqual(['rm-recursive'])
+  expect(kinds('echo $(ls; rm -rf x')).toEqual(['rm-recursive'])
+})
+
+test('the cd and the variables are followed inside a wrapper too', () => {
+  const [risk] = classify('bash -c "D=/srv/out && cd /work && rm -rf $D/a"')
+  expect(risk?.dir).toEqual({ path: '/work', isKnown: true })
+  expect(pathArgs(risk?.segment ?? '', risk?.vars)).toEqual({ paths: ['/srv/out/a'], skipped: [] })
 })
 
 test('known ceiling: an alias, a script and a command built from variables are not caught', () => {

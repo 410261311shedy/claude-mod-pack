@@ -18,7 +18,7 @@
 // that changes only an untracked file's content, or only text beyond the cap, is not seen. Staging a tracked
 // file is not an edit, but `git add` of a new file after the check adds it to `git diff HEAD` and holds the commit.
 
-import { resolvePath, SAFE_NAME, SEPARATORS, stripPrefix, words } from './blast-radius'
+import { commandParts, resolvePath, SAFE_NAME, stripPrefix, words } from './blast-radius'
 import { defineFeature } from './feature'
 import type { ModPackShipGate } from '../types'
 
@@ -135,12 +135,12 @@ const publishOf = (segment: string, dir: Dir): Publish | undefined => {
 // Every commit, publish and test-like segment of `command`, in order. `cwd` is the session folder.
 export const plan = (command: string, cwd: string | undefined): Plan => {
   const out: Plan = { commits: [], publishes: [], tests: [] }
-  const parts = command.split(new RegExp(`(${SEPARATORS.source})`))
+  const parts = commandParts(command)
   const isSkipped = command.includes(SKIP_MARKER)
   let dir: Dir = { path: cwd, isKnown: true }
   let isTested = false
-  for (let i = 0; i < parts.length; i += 2) {
-    const segment = stripPrefix(parts[i] ?? '')
+  for (let i = 0; i < parts.length; i++) {
+    const segment = stripPrefix(parts[i]?.text ?? '')
     if (segment) {
       if (CHANGES_DIRECTORY.test(segment)) dir = cdTarget(dir, segment)
       else if (TEST.test(segment)) {
@@ -154,7 +154,7 @@ export const plan = (command: string, cwd: string | undefined): Plan => {
       }
     }
     // Only `&&` keeps a passed test in force for the next segment.
-    if (parts[i + 1] !== '&&') isTested = false
+    if (parts[i]?.sep !== '&&') isTested = false
   }
   return out
 }

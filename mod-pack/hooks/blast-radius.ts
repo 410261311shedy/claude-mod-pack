@@ -9,8 +9,8 @@
 // command text. It does NOT catch: an alias, a script that calls rm, a command
 // built from variables (`eval "$cmd"`), or other quoting tricks. A variable set earlier
 // in the same command is only filled in for the preview, never used to decide.
-// It splits on `&&`, `||`, `;`, `|`, `&` and newlines and also inside quotes, so
-// `echo "a; rm -rf x"` is a false positive. That is acceptable. `echo "rm -rf x"`
+// It splits on `&&`, `||`, `;`, `|`, `&` and newlines outside quotes (see `commandParts`),
+// and splits again the command line given to `sh -c` and the other wrappers. `echo "rm -rf x"`
 // and `grep rm -rf README` are NOT held: a rule matches only at the start of a segment.
 
 import { defineFeature } from './feature'
@@ -127,6 +127,112 @@ export const stripPrefix = (segment: string) => {
   return rest.trim()
 }
 
+// ---- Splitting a command, quotes read ---------------------------------------------
+
+// One command of a command line, and the separator that ends it ('' at the end).
+export type Part = { text: string; sep: string }
+
+const SEPARATOR_AT = /^(?:&&|\|\||[;|\n\r]|(?<![0-9>&])&(?![&>]))/
+
+// Splits at the separators that the shell sees: not inside single quotes, and inside double
+// quotes only at `$(` and a backtick, which run a nested command there too. A `)` that closes a
+// `$(` ends that nested command. Undefined when a quote, a `$(` or a backtick is not closed:
+// the shell would read the line in a way that is not worked out here.
+export const splitQuoted = (command: string): Part[] | undefined => {
+  const parts: Part[] = []
+  const stack: ('"' | "'" | '$(' | '`')[] = []
+  let start = 0
+  const cut = (at: number, sep: string) => {
+    parts.push({ text: command.slice(start, at), sep })
+    start = at + sep.length
+  }
+  for (let i = 0; i < command.length; i++) {
+    const top = stack[stack.length - 1]
+    const c = command[i] ?? ''
+    if (top === "'") {
+      if (c === "'") stack.pop()
+      continue
+    }
+    if (c === '\\' && i + 1 < command.length && command[i + 1] !== '\n') {
+      i++
+      continue
+    }
+    if (command.startsWith('$(', i)) {
+      cut(i, '$(')
+      stack.push('$(')
+      i++
+      continue
+    }
+    if (c === '`') {
+      if (top === '`') stack.pop()
+      else stack.push('`')
+      cut(i, '`')
+      continue
+    }
+    if (top === '"') {
+      if (c === '"') stack.pop()
+      continue
+    }
+    // Here the text is code: the top level, inside `$(...)` or inside backticks.
+    if (c === '"' || c === "'") stack.push(c)
+    else if (c === ')' && top === '$(') {
+      stack.pop()
+      cut(i, ')')
+    } else {
+      const sep = SEPARATOR_AT.exec(command.slice(i, i + 2))?.[0]
+      if (sep && (sep !== '&' || !/[0-9>&]/.test(command[i - 1] ?? ''))) {
+        cut(i, sep)
+        i += sep.length - 1
+      }
+    }
+  }
+  if (stack.length) return undefined
+  parts.push({ text: command.slice(start), sep: '' })
+  return parts
+}
+
+// A shell that runs the text after it as a command line: `bash -c '...'`, `eval "..."`,
+// `cmd /c ...`, `powershell -Command "..."`. The prefixes (sudo, env, xargs, ...) stand before it.
+const PLAIN_PREFIX = new RegExp(
+  String.raw`^\s*(?:[({!]\s*|\\|[A-Za-z_]\w*=\S*\s+|` +
+    String.raw`(?:sudo|doas)(?:\s+(?:-[ughCpUrtT]\s+\S+|-\S+))*\s+|` +
+    String.raw`(?:command|builtin|exec|nohup|time|nice|xargs|env)(?:\s+(?:-[IdEeLnPsaui]\s+\S+|-\S+))*\s+)`,
+  'i',
+)
+const WRAPPER = /^(?:(?:ba|z|da|k)?sh(?:\.exe)?(?:\s+-[a-z]+)*?\s+-[a-z]*c[a-z]*|eval|cmd(?:\.exe)?\s+\/[ck]|(?:powershell|pwsh)(?:\.exe)?(?:\s+-\S+)*?\s+-c(?:ommand)?)\s+/i
+
+// The command line inside a wrapper's quoted argument, or undefined when `text` is no wrapper.
+const wrapped = (text: string): string | undefined => {
+  let rest = text
+  while (PLAIN_PREFIX.test(rest)) rest = rest.replace(PLAIN_PREFIX, '')
+  const head = WRAPPER.exec(rest)
+  if (!head) return undefined
+  const arg = rest.slice(head[0].length).trim().replace(/\)+$/, '').trim()
+  const quote = arg[0]
+  if ((quote === "'" || quote === '"') && arg.endsWith(quote) && arg.length > 1) {
+    const inner = arg.slice(1, -1)
+    return quote === '"' ? inner.replace(/\\(["\\$`])/g, '$1') : inner
+  }
+  return arg
+}
+
+const MAX_DEPTH = 4
+
+// Every command of a command line, in order, with the separator after it. Quotes are read, so
+// `grep "a; rm -rf x"` is one command. The command line inside `bash -c "..."` and the other
+// wrappers is split again. When the quotes do not add up, every separator splits, quoted or not:
+// that can hold too much, never too little.
+export const commandParts = (command: string, depth = 0): Part[] => {
+  const top = splitQuoted(command) ?? command.split(new RegExp(`(${SEPARATORS.source})`)).flatMap((text, i, all) => (i % 2 ? [] : [{ text, sep: all[i + 1] ?? '' }]))
+  return top.flatMap(part => {
+    const inner = depth < MAX_DEPTH ? wrapped(part.text) : undefined
+    if (inner === undefined) return [part]
+    const parts = commandParts(inner, depth + 1)
+    const last = parts[parts.length - 1]
+    return last ? [...parts.slice(0, -1), { ...last, sep: part.sep }] : [part]
+  })
+}
+
 export type Risk = {
   kind: string
   title: string
@@ -182,13 +288,13 @@ export const classify = (command: string): Risk[] => {
   let hasCd = false
   let dir: Dir = { path: undefined, isKnown: true }
   const vars: Record<string, string> = {}
-  const parts = command.split(new RegExp(`(${SEPARATORS.source})`))
-  for (let i = 0; i < parts.length; i += 2) {
-    const raw = parts[i] ?? ''
+  const parts = commandParts(command)
+  for (let i = 0; i < parts.length; i++) {
+    const raw = parts[i]?.text ?? ''
     const set = assignment(stripGrouping(raw), vars)
     if (set) {
       // `D=$(pwd)` is split at `$(`: what D gets is the output of the nested command.
-      const isNested = parts[i + 1] === '$(' || parts[i + 1] === '`'
+      const isNested = parts[i]?.sep === '$(' || parts[i]?.sep === '`'
       if (set.value === undefined || isNested) delete vars[set.name]
       else vars[set.name] = set.value
       continue

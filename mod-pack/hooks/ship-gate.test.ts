@@ -96,6 +96,15 @@ test('git push is a publish; a dry run is not', () => {
   expect(kinds('git pull')).toEqual([])
 })
 
+test('quotes are read: a push named in a commit message is not a push; one in bash -c is', () => {
+  expect(kinds('git commit -m "docs: say when to run git push; and gh repo create"')).toEqual([])
+  expect(kinds("echo 'git push --force'")).toEqual([])
+  expect(kinds('bash -c "cd /repo && git push"')).toEqual(['push'])
+  expect(plan('bash -c "cd /repo && git push"', '/w').publishes[0]?.dir).toEqual({ path: '/repo', isKnown: true })
+  // a test before `&&` still covers the commit after it, inside a wrapper too
+  expect(plan('sh -c "npm test && git commit -m x"', '/w').commits[0]?.isCovered).toBe(true)
+})
+
 test('git push names its remote when it has one, and runs in the cd folder', () => {
   const [push] = plan('cd /repo && git push origin main', '/w').publishes
   expect(push).toMatchObject({ kind: 'push', remote: 'origin', dir: { path: '/repo', isKnown: true } })
